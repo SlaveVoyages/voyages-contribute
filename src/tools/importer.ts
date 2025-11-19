@@ -398,7 +398,7 @@ export const MapRow = async (
       const itemSchema = getSchema(property.linkedEntitySchema)
       const addedEntities: Omit<OwnedEntityChange, "property">[] = []
       for (const itemMapping of mapping.addedToList) {
-        const itemChanges: PropertyChange[] = [];
+        const itemChanges: PropertyChange[] = []
         for (const m of itemMapping.importUpdates) {
           const changes = await processMapping(m, itemSchema, localContext)
           itemChanges.push(...changes)

@@ -635,6 +635,71 @@ app.post("/create_batch", authenticateJWT, async (req, res) => {
   }
 })
 
+// Edit publication batch (rename and/or update comments)
+app.patch("/edit_batch", authenticateJWT, async (req, res) => {
+  try {
+    const { id, title, comments } = req.body
+    if (id === undefined) {
+      res.status(400).json({
+        error: "Missing required fields",
+        details: "id is required"
+      })
+      return
+    }
+    const batchId = parseInt(id)
+    if (isNaN(batchId)) {
+      res.status(400).json({
+        error: "Invalid batch ID",
+        details: "id must be a number"
+      })
+      return
+    }
+    const existing = await dbService.getBatchById(batchId)
+    if (!existing) {
+      res.status(404).json({ error: "Batch not found" })
+      return
+    }
+    if (title !== undefined) {
+      const trimmed = String(title).trim()
+      if (trimmed.length === 0) {
+        res.status(400).json({
+          error: "Invalid title",
+          details: "title cannot be empty"
+        })
+        return
+      }
+      if (trimmed !== existing.title) {
+        const conflict = await dbService.getBatchByTitle(trimmed)
+        if (conflict && conflict.id !== batchId) {
+          res.status(409).json({
+            error: "Batch with this title already exists",
+            existing: conflict
+          })
+          return
+        }
+      }
+    }
+    if (title === undefined && comments === undefined) {
+      res.status(400).json({
+        error: "No fields to update",
+        details: "Provide title or comments to update"
+      })
+      return
+    }
+    const updated = await dbService.updateBatch(batchId, {
+      title: title !== undefined ? String(title).trim() : undefined,
+      comments: comments !== undefined ? String(comments) : undefined
+    })
+    res.status(200).json(updated)
+  } catch (error) {
+    console.error("Error editing publication batch:", error)
+    res.status(500).json({
+      error: "Failed to edit publication batch",
+      details: (error as Error).message
+    })
+  }
+})
+
 app.delete("/batches/:id", authenticateJWT, async (req, res) => {
   // Delete batch only if no contributions are assigned to it.
   try {
@@ -754,6 +819,17 @@ app.post("/publish", authenticateJWT, async (req, res) => {
     }
     let contributions: Contribution[]
     if (mode === "batch") {
+      const submittedContributions = await dbService.getBatchContributions(
+        id,
+        ContributionStatus.Submitted
+      )
+      if (submittedContributions && submittedContributions.length > 0) {
+        res.status(400).json({
+          error: "Batch has contributions without an editorial decision",
+          details: "All contributions in the batch must be Accepted or Rejected before publication"
+        })
+        return
+      }
       const batchContributions = await dbService.getBatchContributions(
         id,
         ContributionStatus.Accepted
@@ -797,6 +873,12 @@ app.post("/publish", authenticateJWT, async (req, res) => {
       if (contribution.status !== ContributionStatus.Accepted) {
         res.status(404).json({
           error: "Contribution status must be Accepted"
+        })
+        return
+      }
+      if (contribution.batch) {
+        res.status(400).json({
+          error: "Contribution is already part of a batch and cannot be published individually"
         })
         return
       }
@@ -846,10 +928,6 @@ app.post("/publish", authenticateJWT, async (req, res) => {
         contribution_ids: contributions.map((c) => c.id)
       })
     })
-    // TODO: once the publication is done, we need to change the status from
-    // Accepted => Published. This could also involve some basic check of direct
-    // property values as a basic validation of the publication process.
-
     // forward the response.
     res.status(pubRes.status).json({ ...(await pubRes.json()), validation })
   } catch (error) {
@@ -861,6 +939,7 @@ app.post("/publish", authenticateJWT, async (req, res) => {
   }
 })
 
+// Poll publication status
 app.post("/publish_poll/:pub_id", authenticateJWT, async (req, res) => {
   try {
     const { pub_id } = req.params

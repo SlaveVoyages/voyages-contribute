@@ -224,6 +224,10 @@ export class DatabaseService {
     })
   }
 
+  async getBatchById(batchId: number): Promise<PublicationBatchEntity | null> {
+    return this.batchRepository.findOne({ where: { id: batchId } })
+  }
+
   async listContributions(
     options: {
       page?: number
@@ -528,6 +532,20 @@ export class DatabaseService {
   async deleteBatch(batchId: number): Promise<boolean> {
     const result = await this.batchRepository.delete(batchId)
     return (result.affected ?? 0) > 0
+  }
+
+  async updateBatch(
+    batchId: number,
+    data: { title?: string; comments?: string }
+  ): Promise<PublicationBatchEntity | null> {
+    if (!data.title && !data.comments) {
+      return this.getBatchById(batchId)
+    }
+    await this.batchRepository.update(batchId, {
+      ...(data.title !== undefined ? { title: data.title } : {}),
+      ...(data.comments !== undefined ? { comments: data.comments } : {})
+    })
+    return this.getBatchById(batchId)
   }
 }
 
