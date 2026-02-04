@@ -5,7 +5,7 @@ import express, {
   ErrorRequestHandler
 } from "express"
 import { initDatabase, DatabaseService, ContributionEntity } from "./db"
-import jwt from "jsonwebtoken"
+import { jwtVerify, createRemoteJWKSet } from "jose"
 import dotenv from "dotenv"
 import cors from "cors"
 import morgan from "morgan"
@@ -32,7 +32,17 @@ dotenv.config()
 // Initialize the app
 const app = express()
 const PORT = process.env.PORT || 7127
-const JWT_SECRET = process.env.JWT_SECRET || "dummy-secret"
+
+// Supabase configuration
+const SUPABASE_URL = process.env.SUPABASE_URL || ""
+const SUPABASE_JWKS_URL =
+  process.env.SUPABASE_JWKS_URL ||
+  `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`
+
+// Initialize JWKS for JWT verification
+const JWKS = SUPABASE_JWKS_URL
+  ? createRemoteJWKSet(new URL(SUPABASE_JWKS_URL))
+  : null
 
 const VOYAGES_SERVER_URL =
   process.env.VOYAGES_SERVER_URL || "http://127.0.0.1:8000"
@@ -124,18 +134,16 @@ app.use(morgan("dev"))
 let dbService: DatabaseService
 let resolver: DataResolver
 
-// JWT authentication middleware
-const authenticateJWT = (req: Request, res: Response, next: NextFunction) => {
-  if (JWT_SECRET === "dummy-secret") {
-    // TODO: remove this when auth is implemented.
-    ;(req as any).user = req.headers.authorization ?? "unknown"
-    next()
-    return
-  }
+// JWT authentication middleware using Supabase JWKS
+const authenticateJWT = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   const authHeader = req.headers.authorization
 
-  if (!authHeader) {
-    res.status(401).json({ error: "Authorization header missing" })
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Authorization header missing or invalid" })
     return
   }
 
@@ -146,13 +154,30 @@ const authenticateJWT = (req: Request, res: Response, next: NextFunction) => {
     return
   }
 
+  if (!JWKS) {
+    res.status(500).json({ error: "JWT verification not configured" })
+    return
+  }
+
   try {
-    const user = jwt.verify(token, JWT_SECRET)
+    // Verify JWT using Supabase's JWKS
+    const { payload } = await jwtVerify(token, JWKS, {
+      issuer: `${SUPABASE_URL}/auth/v1`,
+      audience: "authenticated"
+    })
+
+    // Extract user info from token payload
+    const user = {
+      id: payload.sub!,
+      email: payload.email as string,
+      metadata: (payload.user_metadata as Record<string, any>) || {}
+    }
+
     ;(req as any).user = user
-    next() // Call next() to proceed to the next middleware or route handler
-  } catch {
+    next()
+  } catch (error) {
+    console.error("JWT verification failed:", error)
     res.status(403).json({ error: "Invalid or expired token" })
-    // No return needed here since we're ending the response
   }
 }
 
@@ -277,16 +302,27 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
 
 const getAuthorFromRequest = (req: Request): string | null => {
   const user = (req as any).user
-  // TODO: if no user is authenticated, return null!
+
+  if (!user) {
+    return null
+  }
+
+  // For Supabase tokens, user will have id, email, and metadata
+  if (typeof user === "object" && user.metadata) {
+    const { firstName, lastName } = user.metadata
+    if (firstName && lastName) {
+      return `${firstName} ${lastName}`
+    }
+    if (firstName) {
+      return firstName
+    }
+  }
+
+  // Fallback to email or other identifiers
   const author =
-    typeof user === "string"
-      ? user
-      : user?.username ||
-        user?.name ||
-        user?.email ||
-        req.body?.changeSet?.author ||
-        "Unknown"
-  return author
+    user?.email || user?.username || user?.name || req.body?.changeSet?.author
+
+  return author || null
 }
 
 app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
