@@ -1,11 +1,11 @@
 {
-  "name": "@dotproductdev/voyages-contribute",
+  "name": "@slavevoyages/voyages-contribute",
   "private": false,
   "version": "0.3.5",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DotProductDev/voyages-contribute.git"
+    "url": "git+https://github.com/SlaveVoyages/voyages-contribute.git"
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
