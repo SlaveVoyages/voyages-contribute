@@ -18,7 +18,7 @@ const getCacheEntry = async (
 ): Promise<Record<string, LookupMaterializedEntity>> => {
   try {
     const res = await fetch(new URL(`${url}/enumerate/${schema.name}`))
-    const items: LookupMaterializedEntity[] = await res.json()
+    const items: MaterializedEntity[] = await res.json()
     const data: Record<string, LookupMaterializedEntity> = {}
     const nonUnique: Set<string> = new Set()
     for (const item of items) {
@@ -28,8 +28,7 @@ const getCacheEntry = async (
           // If we already have this key, mark it as non-unique.
           nonUnique.add(rowKey)
         }
-        item.lookupValue = rowKey
-        data[rowKey] = item
+        data[rowKey] = { ...item, lookupValue: rowKey }
       }
     }
     // Remove non-unique keys.

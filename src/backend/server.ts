@@ -37,7 +37,15 @@ const PORT = process.env.PORT || 7127
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
 const SUPABASE_JWKS_URL =
   process.env.SUPABASE_JWKS_URL ||
-  `${SUPABASE_URL}/auth/v1/.well-known/jwks.json`
+  (SUPABASE_URL ? `${SUPABASE_URL}/auth/v1/.well-known/jwks.json` : "")
+
+const isAbsoluteUrl = (u: string) => /^https?:\/\//i.test(u)
+
+if (SUPABASE_JWKS_URL && !isAbsoluteUrl(SUPABASE_JWKS_URL)) {
+  throw new Error(
+    `SUPABASE_JWKS_URL must be an absolute URL; got "${SUPABASE_JWKS_URL}". Set SUPABASE_URL or SUPABASE_JWKS_URL.`
+  )
+}
 
 // Initialize JWKS for JWT verification
 const JWKS = SUPABASE_JWKS_URL
@@ -276,7 +284,7 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
     res.json(contributions)
   } catch (error) {
     console.error(
-      `Error fetching WIP contributions for user ${req.params.user}:`,
+      `Error fetching WIP contributions for author ${getAuthorFromRequest(req)}:`,
       error
     )
     res.status(500).json({ error: "Failed to fetch WIP contributions" })
@@ -330,8 +338,6 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
     const author = getAuthorFromRequest(req)
     if (!author) {
       res
-        .status(400)
-        .json({ error: "Cannot determine author from token or request" })
         .status(400)
         .json({ error: "Cannot determine author from token or request" })
       return
