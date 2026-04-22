@@ -427,14 +427,14 @@ export const MapRow = async (
       // Merge owned list changes to the same property.
       const merged: OwnedEntityListChange[] = []
       for (const binding of mapping.bindings) {
-        // Build a fresh context per binding so per-binding state (e.g. __lookup__*)
-        // does not leak across iterations.
-        const bindingContext = { ...localContext, ...binding }
+        // Merge contexts.
+        Object.assign(localContext, binding)
+        // Process each nested mapping with the current context.
         for (const nestedMapping of mapping.mappings) {
           const nestedChanges = await processMapping(
             nestedMapping,
             currentSchema,
-            bindingContext
+            localContext
           )
           for (const change of nestedChanges) {
             if (change.kind === "ownedList") {

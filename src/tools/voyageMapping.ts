@@ -3,20 +3,19 @@ import { DataMapping } from "./importer"
 const extractSourcePrefixes =
   (d: string) => {
     const values: [prefix: string, suffix: string][] = []
-    let searchEnd = d.length
+    const original = d
     while (true) {
-      const idxSep = d.lastIndexOf(",", searchEnd - 1)
+      const idxSep = d.lastIndexOf(",")
       if (idxSep < 0) {
         break
       }
-      const prefix = d.slice(0, idxSep).trim()
-      if (prefix !== "") {
-        values.push([prefix, d.slice(idxSep + 1).trim()])
+      d = d.slice(0, idxSep).trim()
+      if (d !== "") {
+        values.push([d, original.slice(idxSep + 1).trim()])
       }
-      searchEnd = idxSep
     }
-    if (d.trim() !== "") {
-      values.push([d.trim(), ""])
+    if (original.trim() !== "") {
+      values.push([original.trim(), ""])
     }
     return values.length > 0
       ? values
