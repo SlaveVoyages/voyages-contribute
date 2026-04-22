@@ -1,7 +1,7 @@
 {
   "name": "@slavevoyages/voyages-contribute",
   "private": false,
-  "version": "0.3.5",
+  "version": "0.4.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -48,7 +48,6 @@
     "eslint": "^9.22.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.3",
-    "mysql2": "^3.14.0",
     "prettier": "^3.5.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2",
@@ -69,6 +68,7 @@
     "multer": "^2.0.1",
     "papaparse": "^5.5.3",
     "reflect-metadata": "^0.2.2",
+    "mysql2": "^3.14.0",
     "sqlite3": "^5.1.7",
     "typeorm": "^0.3.21",
     "uuid": "^11.1.0"

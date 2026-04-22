@@ -2,53 +2,99 @@
 @baseUrl = http://localhost:7127
 @contributionId = contrib-456-new
 
+### Supabase auth — values are read from the workspace-root .env file.
+### Populate SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_AUTH_EMAIL / SUPABASE_AUTH_PASSWORD there.
+@supabaseUrl = {{$dotenv SUPABASE_URL}}
+@supabaseAnonKey = {{$dotenv SUPABASE_ANON_KEY}}
+@authEmail = {{$dotenv SUPABASE_AUTH_EMAIL}}
+@authPassword = {{$dotenv SUPABASE_AUTH_PASSWORD}}
+
+### Log in via Supabase (password grant) to obtain an access_token.
+### Run this request first; subsequent requests reuse {{authToken}} automatically.
+# @name login
+POST {{supabaseUrl}}/auth/v1/token?grant_type=password
+Content-Type: application/json
+apikey: {{supabaseAnonKey}}
+
+{
+  "email": "{{authEmail}}",
+  "password": "{{authPassword}}"
+}
+
+###
+
+@authToken = {{login.response.body.access_token}}
+@refreshToken = {{login.response.body.refresh_token}}
+
+### Refresh the access token when it expires
+# @name refresh
+POST {{supabaseUrl}}/auth/v1/token?grant_type=refresh_token
+Content-Type: application/json
+apikey: {{supabaseAnonKey}}
+
+{
+  "refresh_token": "{{refreshToken}}"
+}
+
+###
+
 ### Get all contributions (default pagination)
 GET {{baseUrl}}/contributions
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions with pagination
 GET {{baseUrl}}/contributions?page=2&limit=5
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions sorted by author (ascending)
 GET {{baseUrl}}/contributions?sortBy=author&sortOrder=ASC
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions sorted by timestamp (most recent first)
 GET {{baseUrl}}/contributions?sortBy=timestamp&sortOrder=DESC
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions with specific status (assuming status enum values 0=pending, 1=approved, 2=rejected)
 GET {{baseUrl}}/contributions?status=0
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions with multiple statuses
 GET {{baseUrl}}/contributions?status=0&status=1
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions with complex filtering and pagination
 GET {{baseUrl}}/contributions?page=1&limit=20&status=1&sortBy=timestamp&sortOrder=DESC
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get single contribution by ID
 GET {{baseUrl}}/contributions/{{contributionId}}
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get non-existent contribution (should return 404)
 GET {{baseUrl}}/contributions/non-existent-id
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Create new contribution
 POST {{baseUrl}}/contributions
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -84,6 +130,7 @@ Content-Type: application/json
 
 ### Create another contribution
 POST {{baseUrl}}/contributions
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -110,6 +157,7 @@ Content-Type: application/json
 
 ### Submit contribution for review
 PATCH {{baseUrl}}/contributions/{{contributionId}}/change_status
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -121,6 +169,7 @@ Content-Type: application/json
 ### Add review with specific author and timestamp
 
 POST {{baseUrl}}/contributions/{{contributionId}}/add_review
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -149,6 +198,7 @@ Content-Type: application/json
 ### Add some review with specific author and timestamp
 
 POST {{baseUrl}}/contributions/Voyage.Voyage.500003/add_review
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -195,6 +245,7 @@ Content-Type: application/json
 ### Add a second review emulating a Bot
 
 POST {{baseUrl}}/contributions/{{contributionId}}/add_review
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -216,6 +267,7 @@ Content-Type: application/json
 
 ### Upload media to contribution (image)
 POST {{baseUrl}}/contributions/{{contributionId}}/upload_media
+Authorization: Bearer {{authToken}}
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
 
 ------WebKitFormBoundary7MA4YWxkTrZu0gW
@@ -237,6 +289,7 @@ Content-Type: image/jpeg
 
 ### Upload media to contribution (audio)
 POST {{baseUrl}}/contributions/{{contributionId}}/upload_media
+Authorization: Bearer {{authToken}}
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
 
 ------WebKitFormBoundary7MA4YWxkTrZu0gW
@@ -258,6 +311,7 @@ Content-Type: audio/mpeg
 
 ### Upload media to contribution (document)
 POST {{baseUrl}}/contributions/{{contributionId}}/upload_media
+Authorization: Bearer {{authToken}}
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
 
 ------WebKitFormBoundary7MA4YWxkTrZu0gW
@@ -279,6 +333,7 @@ Content-Type: application/pdf
 
 ### Error case - no file uploaded
 POST {{baseUrl}}/contributions/{{contributionId}}/upload_media
+Authorization: Bearer {{authToken}}
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
 
 ------WebKitFormBoundary7MA4YWxkTrZu0gW
@@ -291,6 +346,7 @@ Missing File Test
 
 ### Error case - missing name field
 POST {{baseUrl}}/contributions/{{contributionId}}/upload_media
+Authorization: Bearer {{authToken}}
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
 
 ------WebKitFormBoundary7MA4YWxkTrZu0gW
@@ -308,6 +364,7 @@ Content-Type: image/jpeg
 
 ### Error case - upload to non-existent contribution
 POST {{baseUrl}}/contributions/non-existent-id/upload_media
+Authorization: Bearer {{authToken}}
 Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
 
 ------WebKitFormBoundary7MA4YWxkTrZu0gW
@@ -327,16 +384,19 @@ Content-Type: image/jpeg
 @mediaId = 1
 
 DELETE {{baseUrl}}/media/{{mediaId}}
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Error case - delete non-existent media
 DELETE {{baseUrl}}/media/99999
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Create publication batch
 POST {{baseUrl}}/create_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -348,6 +408,7 @@ Content-Type: application/json
 
 ### Create batch with minimal data
 POST {{baseUrl}}/create_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -360,6 +421,7 @@ Content-Type: application/json
 @batchId = 1
 
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -374,6 +436,7 @@ Content-Type: application/json
 ### multiple IDs in one request. If they already exist, server will replace
 ### the WorkInProgress version (status 0) with the provided changeSet.
 POST {{baseUrl}}/contributions
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -394,6 +457,7 @@ Content-Type: application/json
 
 ###
 POST {{baseUrl}}/contributions
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -414,6 +478,7 @@ Content-Type: application/json
 
 ###
 POST {{baseUrl}}/contributions
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -440,6 +505,7 @@ Content-Type: application/json
 @multiContributionC = contrib-multi-3
 
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -455,6 +521,7 @@ Content-Type: application/json
 
 ### Clear multiple contributions from batch (set to null)
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -471,6 +538,7 @@ Content-Type: application/json
 ### Advanced queries - Get contributions associated to batch
 
 GET {{baseUrl}}/contributions?batch_id=1
+Authorization: Bearer {{authToken}}
 
 ###
 
@@ -478,12 +546,14 @@ GET {{baseUrl}}/contributions?batch_id=1
 ### Advanced queries - Get contributions associated not associated to any batch
 
 GET {{baseUrl}}/contributions?status=0&batch_id=null
+Authorization: Bearer {{authToken}}
 
 ###
 
 
 ### Clear contribution batch assignment (set to null)
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -497,6 +567,7 @@ Content-Type: application/json
 @secondContributionId = contrib_456
 
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -508,6 +579,7 @@ Content-Type: application/json
 
 ### Error case - create batch without title
 POST {{baseUrl}}/create_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -518,6 +590,7 @@ Content-Type: application/json
 
 ### Error case - assign to non-existent batch
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -529,6 +602,7 @@ Content-Type: application/json
 
 ### Error case - assign non-existent contribution
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -540,6 +614,7 @@ Content-Type: application/json
 
 ### Error case - one of multiple contributions does not exist
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -555,6 +630,7 @@ Content-Type: application/json
 
 ### Error case - missing contribution_id
 PATCH {{baseUrl}}/assign_to_batch
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -565,26 +641,31 @@ Content-Type: application/json
 
 ### Get all batches
 GET {{baseUrl}}/batches/all
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get published batches only
 GET {{baseUrl}}/batches/published
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get pending batches only
 GET {{baseUrl}}/batches/pending
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Delete batch (will only succeed if it has no contributions)
 DELETE {{baseUrl}}/batches/{{batchId}}
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Error case - delete batch that still has contributions (recreate / reassign first if needed)
 DELETE {{baseUrl}}/batches/1
+Authorization: Bearer {{authToken}}
 
 ###
 
@@ -601,31 +682,37 @@ DELETE {{baseUrl}}/batches/1
 
 ### Advanced queries - Get pending contributions sorted by author
 GET {{baseUrl}}/contributions?status=0&sortBy=author&sortOrder=ASC&page=1&limit=10
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get approved and rejected contributions with pagination
 GET {{baseUrl}}/contributions?status=1&status=2&page=2&limit=15
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Get contributions sorted by newest first with large page size
 GET {{baseUrl}}/contributions?sortBy=timestamp&sortOrder=DESC&page=1&limit=50
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Edge case - very high page number (should return empty results)
 GET {{baseUrl}}/contributions?page=9999&limit=10
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Edge case - zero limit (should use default)
 GET {{baseUrl}}/contributions?page=1&limit=0
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### Publish a batch
 POST {{baseUrl}}/publish
+Authorization: Bearer {{authToken}}
 Content-Type: application/json
 
 {
@@ -637,12 +724,13 @@ Content-Type: application/json
 
 ### Poll publication status
 POST {{baseUrl}}/publish_poll/1_batch
+Authorization: Bearer {{authToken}}
 
 ###
 
 ### WIP by contributor
 
 GET {{baseUrl}}/contributions/wip
-Authorization: CSV importer script
+Authorization: Bearer {{authToken}}
 
 ###

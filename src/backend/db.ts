@@ -1,4 +1,5 @@
 import "reflect-metadata"
+import fs from "fs"
 import {
   Entity,
   Column,
@@ -146,18 +147,12 @@ export class ContributionEntity implements Contribution {
   decisionComments?: string
 }
 
-// Database connection (SQLite)
+// Database connection
 
-const DATABASE = process.env.CONTRIB_DB_PATH || "./contrib.db"
+const DB_TYPE = process.env.CONTRIB_DB_TYPE || "sqlite"
 const IS_DEVELOPMENT = process.env.NODE_ENV === "development"
 
-if (IS_DEVELOPMENT) {
-  console.log(`Running in development mode, using database at: ${DATABASE}`)
-}
-
-export const AppDataSource = new DataSource({
-  type: "sqlite",
-  database: DATABASE,
+const sharedOptions = {
   synchronize: IS_DEVELOPMENT,
   logging: true,
   entities: [
@@ -169,7 +164,37 @@ export const AppDataSource = new DataSource({
   ],
   subscribers: [],
   migrations: []
-})
+}
+
+const createDataSource = (): DataSource => {
+  if (DB_TYPE === "mysql") {
+    console.log(`Using MySQL database at ${process.env.CONTRIB_DB_HOST || "localhost"}`)
+    return new DataSource({
+      ...sharedOptions,
+      type: "mysql",
+      host: process.env.CONTRIB_DB_HOST || "localhost",
+      port: parseInt(process.env.CONTRIB_DB_PORT || "3306"),
+      username: process.env.CONTRIB_DB_USER || "root",
+      password: process.env.CONTRIB_DB_PASSWORD || "",
+      database: process.env.CONTRIB_DB_NAME || "voyages_contribute",
+      charset: "utf8mb4",
+      ssl: process.env.CONTRIB_DB_SSL_CA
+        ? { ca: fs.readFileSync(process.env.CONTRIB_DB_SSL_CA) }
+        : process.env.CONTRIB_DB_SSL !== "false"
+          ? { rejectUnauthorized: true }
+          : undefined
+    })
+  }
+  const database = process.env.CONTRIB_DB_PATH || "./contrib.db"
+  console.log(`Using SQLite database at: ${database}`)
+  return new DataSource({
+    ...sharedOptions,
+    type: "sqlite",
+    database
+  })
+}
+
+export const AppDataSource = createDataSource()
 
 const contribAllRelations = ["changeSet", "reviews", "reviews.changeSet", "media", "batch"]
 

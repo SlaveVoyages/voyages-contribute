@@ -28,6 +28,9 @@ dist-ssr
 *.sqlite
 *.db
 
+# SSL certificates
+*.pem
+
 output/
 
 .env
