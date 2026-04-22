@@ -168,16 +168,22 @@ const authenticateJWT = async (
   }
 
   try {
-    // Verify JWT using Supabase's JWKS
+    // Verify JWT using Supabase's JWKS. Only enforce the issuer when
+    // SUPABASE_URL is configured, otherwise an empty base would reject
+    // every valid token.
     const { payload } = await jwtVerify(token, JWKS, {
-      issuer: `${SUPABASE_URL}/auth/v1`,
-      audience: "authenticated"
+      audience: "authenticated",
+      ...(SUPABASE_URL ? { issuer: `${SUPABASE_URL}/auth/v1` } : {})
     })
 
-    // Extract user info from token payload
+    if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+      res.status(403).json({ error: "Token missing required subject claim" })
+      return
+    }
+
     const user = {
-      id: payload.sub!,
-      email: payload.email as string,
+      id: payload.sub,
+      email: typeof payload.email === "string" ? payload.email : undefined,
       metadata: (payload.user_metadata as Record<string, any>) || {}
     }
 
@@ -326,9 +332,9 @@ const getAuthorFromRequest = (req: Request): string | null => {
     }
   }
 
-  // Fallback to email or other identifiers
-  const author =
-    user?.email || user?.username || user?.name || req.body?.changeSet?.author
+  // Author identity must come from the verified token only; never trust
+  // client-supplied values like req.body.changeSet.author for authorization.
+  const author = user?.email || user?.username || user?.name
 
   return author || null
 }

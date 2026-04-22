@@ -166,6 +166,26 @@ const sharedOptions = {
   migrations: []
 }
 
+const parsePort = (raw: string | undefined): number => {
+  const port = Number(raw ?? "3306")
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(
+      `CONTRIB_DB_PORT must be an integer in 1..65535; got "${raw}".`
+    )
+  }
+  return port
+}
+
+const readSslCa = (caPath: string): Buffer => {
+  try {
+    return fs.readFileSync(caPath)
+  } catch (err) {
+    throw new Error(
+      `Failed to read CONTRIB_DB_SSL_CA at "${caPath}": ${(err as Error).message}`
+    )
+  }
+}
+
 const createDataSource = (): DataSource => {
   if (DB_TYPE === "mysql") {
     console.log(`Using MySQL database at ${process.env.CONTRIB_DB_HOST || "localhost"}`)
@@ -173,13 +193,13 @@ const createDataSource = (): DataSource => {
       ...sharedOptions,
       type: "mysql",
       host: process.env.CONTRIB_DB_HOST || "localhost",
-      port: parseInt(process.env.CONTRIB_DB_PORT || "3306"),
+      port: parsePort(process.env.CONTRIB_DB_PORT),
       username: process.env.CONTRIB_DB_USER || "root",
       password: process.env.CONTRIB_DB_PASSWORD || "",
       database: process.env.CONTRIB_DB_NAME || "voyages_contribute",
       charset: "utf8mb4",
       ssl: process.env.CONTRIB_DB_SSL_CA
-        ? { ca: fs.readFileSync(process.env.CONTRIB_DB_SSL_CA) }
+        ? { ca: readSslCa(process.env.CONTRIB_DB_SSL_CA) }
         : process.env.CONTRIB_DB_SSL !== "false"
           ? { rejectUnauthorized: true }
           : undefined
