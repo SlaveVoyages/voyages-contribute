@@ -5,7 +5,7 @@ import express, {
   ErrorRequestHandler
 } from "express"
 import { initDatabase, DatabaseService, ContributionEntity } from "./db"
-import jwt from "jsonwebtoken"
+import { jwtVerify, createRemoteJWKSet } from "jose"
 import dotenv from "dotenv"
 import cors from "cors"
 import morgan from "morgan"
@@ -24,6 +24,7 @@ import multer from "multer"
 import path from "path"
 import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
+import { randomUUID } from "crypto"
 
 // Load environment variables
 dotenv.config()
@@ -31,7 +32,25 @@ dotenv.config()
 // Initialize the app
 const app = express()
 const PORT = process.env.PORT || 7127
-const JWT_SECRET = process.env.JWT_SECRET || "dummy-secret"
+
+// Supabase configuration
+const SUPABASE_URL = process.env.SUPABASE_URL || ""
+const SUPABASE_JWKS_URL =
+  process.env.SUPABASE_JWKS_URL ||
+  (SUPABASE_URL ? `${SUPABASE_URL}/auth/v1/.well-known/jwks.json` : "")
+
+const isAbsoluteUrl = (u: string) => /^https?:\/\//i.test(u)
+
+if (SUPABASE_JWKS_URL && !isAbsoluteUrl(SUPABASE_JWKS_URL)) {
+  throw new Error(
+    `SUPABASE_JWKS_URL must be an absolute URL; got "${SUPABASE_JWKS_URL}". Set SUPABASE_URL or SUPABASE_JWKS_URL.`
+  )
+}
+
+// Initialize JWKS for JWT verification
+const JWKS = SUPABASE_JWKS_URL
+  ? createRemoteJWKSet(new URL(SUPABASE_JWKS_URL))
+  : null
 
 const VOYAGES_SERVER_URL =
   process.env.VOYAGES_SERVER_URL || "http://127.0.0.1:8000"
@@ -114,9 +133,6 @@ const inferMediaTypeFromMime = (
   return "document"
 }
 
-// Local debug JWT:
-// eyJhbGciOiJIUzI1NiJ9.eyJSb2xlIjoiV2ViVUkiLCJJc3N1ZXIiOiJJc3N1ZXIiLCJVc2VybmFtZSI6IkNvbnRyaWJ1dGVBcHAiLCJleHAiOjM5NTE0NzM0NzIsImlhdCI6MTc0MjQ4NDY3Mn0.11NiAwJt59AyIUF4gO04IUr8earCFQPsQPVXyeMydD0
-
 // Middleware
 app.use(cors())
 app.use(express.json())
@@ -126,17 +142,16 @@ app.use(morgan("dev"))
 let dbService: DatabaseService
 let resolver: DataResolver
 
-// JWT authentication middleware
-const authenticateJWT = (req: Request, res: Response, next: NextFunction) => {
-  if (JWT_SECRET === "dummy-secret") {
-    // TODO: remove this when auth is implemented.
-    next()
-    return
-  }
+// JWT authentication middleware using Supabase JWKS
+const authenticateJWT = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   const authHeader = req.headers.authorization
 
-  if (!authHeader) {
-    res.status(401).json({ error: "Authorization header missing" })
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Authorization header missing or invalid" })
     return
   }
 
@@ -147,13 +162,36 @@ const authenticateJWT = (req: Request, res: Response, next: NextFunction) => {
     return
   }
 
+  if (!JWKS) {
+    res.status(500).json({ error: "JWT verification not configured" })
+    return
+  }
+
   try {
-    const user = jwt.verify(token, JWT_SECRET)
-      ; (req as any).user = user
-    next() // Call next() to proceed to the next middleware or route handler
-  } catch {
+    // Verify JWT using Supabase's JWKS. Only enforce the issuer when
+    // SUPABASE_URL is configured, otherwise an empty base would reject
+    // every valid token.
+    const { payload } = await jwtVerify(token, JWKS, {
+      audience: "authenticated",
+      ...(SUPABASE_URL ? { issuer: `${SUPABASE_URL}/auth/v1` } : {})
+    })
+
+    if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+      res.status(403).json({ error: "Token missing required subject claim" })
+      return
+    }
+
+    const user = {
+      id: payload.sub,
+      email: typeof payload.email === "string" ? payload.email : undefined,
+      metadata: (payload.user_metadata as Record<string, any>) || {}
+    }
+
+    ;(req as any).user = user
+    next()
+  } catch (error) {
+    console.error("JWT verification failed:", error)
     res.status(403).json({ error: "Invalid or expired token" })
-    // No return needed here since we're ending the response
   }
 }
 
@@ -235,6 +273,30 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
   }
 })
 
+app.get("/contributions/wip", authenticateJWT, async (req, res) => {
+  try {
+    const author = getAuthorFromRequest(req)
+    if (!author) {
+      res
+        .status(400)
+        .json({ error: "Cannot determine author from token or request" })
+      return
+    }
+    const contributions = await dbService.listContributions({
+      ...getPaginationArgs(req),
+      author,
+      status: ContributionStatus.WorkInProgress
+    })
+    res.json(contributions)
+  } catch (error) {
+    console.error(
+      `Error fetching WIP contributions for author ${getAuthorFromRequest(req)}:`,
+      error
+    )
+    res.status(500).json({ error: "Failed to fetch WIP contributions" })
+  }
+})
+
 // Get contribution by ID
 app.get("/contributions/:id", authenticateJWT, async (req, res) => {
   try {
@@ -254,42 +316,34 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
 
 const getAuthorFromRequest = (req: Request): string | null => {
   const user = (req as any).user
-  // TODO: if no user is authenticated, return null!
-  const author =
-    user?.username ||
-    user?.name ||
-    user?.email ||
-    req.body?.changeSet?.author ||
-    "Unknown"
-  return author
-}
 
-app.get("/contributions/wip", authenticateJWT, async (req, res) => {
-  try {
-    const author = getAuthorFromRequest(req)
-    if (!author) {
-      res
-        .status(400)
-        .json({ error: "Cannot determine author from token or request" })
-      return
-    }
-    const contributions = await dbService.listContributions({
-      ...getPaginationArgs(req),
-      author,
-      status: ContributionStatus.WorkInProgress
-    })
-    res.json(contributions)
-  } catch (error) {
-    console.error(`Error fetching WIP contributions for user ${req.params.user}:`, error)
-    res.status(500).json({ error: "Failed to fetch WIP contributions" })
+  if (!user) {
+    return null
   }
-})
+
+  // For Supabase tokens, user will have id, email, and metadata
+  if (typeof user === "object" && user.metadata) {
+    const { firstName, lastName } = user.metadata
+    if (firstName && lastName) {
+      return `${firstName} ${lastName}`
+    }
+    if (firstName) {
+      return firstName
+    }
+  }
+
+  // Author identity must come from the verified token only; never trust
+  // client-supplied values like req.body.changeSet.author for authorization.
+  const author = user?.email || user?.username || user?.name
+
+  return author || null
+}
 
 app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
   try {
     const author = getAuthorFromRequest(req)
     if (!author) {
-      res.status(400).json({ error: "Cannot determine author from token or request" })
+      res
         .status(400)
         .json({ error: "Cannot determine author from token or request" })
       return
@@ -353,10 +407,10 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
     // Create contribution with author from JWT
     const contributionData = {
       ...req.body,
-      id: existing?.id ?? req.body.id ?? self.crypto.randomUUID(),
+      id: existing?.id ?? req.body.id ?? randomUUID(),
       changeSet: {
         ...req.body.changeSet,
-        id: existing?.changeSet?.id ?? self.crypto.randomUUID(),
+        id: existing?.changeSet?.id ?? randomUUID(),
         author,
         timestamp: Date.now()
       },
@@ -480,7 +534,7 @@ app.post(
       const type = inferMediaTypeFromMime(uploadedFile.mimetype)
       if (!type || !name) {
         // Clean up uploaded file if validation fails
-        await fs.unlink(uploadedFile.path).catch(() => { })
+        await fs.unlink(uploadedFile.path).catch(() => {})
         res.status(400).json({
           error: "Missing required fields",
           details: "Name is required"
@@ -502,7 +556,7 @@ app.post(
       )
       if (!updatedContribution) {
         // Clean up uploaded file if contribution not found
-        await fs.unlink(uploadedFile.path).catch(() => { })
+        await fs.unlink(uploadedFile.path).catch(() => {})
         res.status(404).json({ error: "Contribution not found" })
         return
       }
@@ -518,7 +572,7 @@ app.post(
     } catch (error) {
       // Clean up uploaded file on error
       if (req.file) {
-        await fs.unlink(req.file.path).catch(() => { })
+        await fs.unlink(req.file.path).catch(() => {})
       }
       console.error(
         `Error uploading media for contribution ${req.params.id}:`,
@@ -624,6 +678,71 @@ app.post("/create_batch", authenticateJWT, async (req, res) => {
     console.error("Error creating publication batch:", error)
     res.status(500).json({
       error: "Failed to create publication batch",
+      details: (error as Error).message
+    })
+  }
+})
+
+// Edit publication batch (rename and/or update comments)
+app.patch("/edit_batch", authenticateJWT, async (req, res) => {
+  try {
+    const { id, title, comments } = req.body
+    if (id === undefined) {
+      res.status(400).json({
+        error: "Missing required fields",
+        details: "id is required"
+      })
+      return
+    }
+    const batchId = parseInt(id)
+    if (isNaN(batchId)) {
+      res.status(400).json({
+        error: "Invalid batch ID",
+        details: "id must be a number"
+      })
+      return
+    }
+    const existing = await dbService.getBatchById(batchId)
+    if (!existing) {
+      res.status(404).json({ error: "Batch not found" })
+      return
+    }
+    if (title !== undefined) {
+      const trimmed = String(title).trim()
+      if (trimmed.length === 0) {
+        res.status(400).json({
+          error: "Invalid title",
+          details: "title cannot be empty"
+        })
+        return
+      }
+      if (trimmed !== existing.title) {
+        const conflict = await dbService.getBatchByTitle(trimmed)
+        if (conflict && conflict.id !== batchId) {
+          res.status(409).json({
+            error: "Batch with this title already exists",
+            existing: conflict
+          })
+          return
+        }
+      }
+    }
+    if (title === undefined && comments === undefined) {
+      res.status(400).json({
+        error: "No fields to update",
+        details: "Provide title or comments to update"
+      })
+      return
+    }
+    const updated = await dbService.updateBatch(batchId, {
+      title: title !== undefined ? String(title).trim() : undefined,
+      comments: comments !== undefined ? String(comments) : undefined
+    })
+    res.status(200).json(updated)
+  } catch (error) {
+    console.error("Error editing publication batch:", error)
+    res.status(500).json({
+      error: "Failed to edit publication batch",
       details: (error as Error).message
     })
   }
@@ -748,6 +867,17 @@ app.post("/publish", authenticateJWT, async (req, res) => {
     }
     let contributions: Contribution[]
     if (mode === "batch") {
+      const submittedContributions = await dbService.getBatchContributions(
+        id,
+        ContributionStatus.Submitted
+      )
+      if (submittedContributions && submittedContributions.length > 0) {
+        res.status(400).json({
+          error: "Batch has contributions without an editorial decision",
+          details: "All contributions in the batch must be Accepted or Rejected before publication"
+        })
+        return
+      }
       const batchContributions = await dbService.getBatchContributions(
         id,
         ContributionStatus.Accepted
@@ -791,6 +921,12 @@ app.post("/publish", authenticateJWT, async (req, res) => {
       if (contribution.status !== ContributionStatus.Accepted) {
         res.status(404).json({
           error: "Contribution status must be Accepted"
+        })
+        return
+      }
+      if (contribution.batch) {
+        res.status(400).json({
+          error: "Contribution is already part of a batch and cannot be published individually"
         })
         return
       }
@@ -840,10 +976,6 @@ app.post("/publish", authenticateJWT, async (req, res) => {
         contribution_ids: contributions.map((c) => c.id)
       })
     })
-    // TODO: once the publication is done, we need to change the status from
-    // Accepted => Published. This could also involve some basic check of direct
-    // property values as a basic validation of the publication process.
-
     // forward the response.
     res.status(pubRes.status).json({ ...(await pubRes.json()), validation })
   } catch (error) {
@@ -855,6 +987,7 @@ app.post("/publish", authenticateJWT, async (req, res) => {
   }
 })
 
+// Poll publication status
 app.post("/publish_poll/:pub_id", authenticateJWT, async (req, res) => {
   try {
     const { pub_id } = req.params

@@ -6,16 +6,20 @@ import {
 } from "../models"
 import { EntityLookUp } from "./importer"
 
+export type LookupMaterializedEntity = MaterializedEntity & {
+  lookupValue: string
+}
+
 const getCacheEntry = async (
   url: string,
   schema: EntitySchema,
   field: string,
   errorCount = 0
-): Promise<Record<string, MaterializedEntity>> => {
+): Promise<Record<string, LookupMaterializedEntity>> => {
   try {
     const res = await fetch(new URL(`${url}/enumerate/${schema.name}`))
-    const items: MaterializedEntity[] = await res.json()
-    const data: Record<string, MaterializedEntity> = {}
+    const items: LookupMaterializedEntity[] = await res.json()
+    const data: Record<string, LookupMaterializedEntity> = {}
     const nonUnique: Set<string> = new Set()
     for (const item of items) {
       const rowKey = String(item.data[field])
@@ -24,6 +28,7 @@ const getCacheEntry = async (
           // If we already have this key, mark it as non-unique.
           nonUnique.add(rowKey)
         }
+        item.lookupValue = rowKey
         data[rowKey] = item
       }
     }
@@ -42,13 +47,14 @@ const getCacheEntry = async (
 }
 
 export const createApiLookup = (url: string): EntityLookUp => {
-  const cache: Record<string, Promise<Record<string, MaterializedEntity>>> = {}
+  const cache: Record<string, Promise<Record<string, LookupMaterializedEntity>>> = {}
   const lookup: EntityLookUp["lookup"] = async (
     schema: EntitySchema,
     field: string,
     value: string | string[]
   ) => {
     const idxDot = field.indexOf(".")
+    let linked: LookupMaterializedEntity | null = null
     if (idxDot !== -1) {
       const nested = field.slice(idxDot + 1)
       field = field.slice(0, idxDot)
@@ -59,7 +65,9 @@ export const createApiLookup = (url: string): EntityLookUp => {
           `Field "${field}" is not a linked entity field in schema "${schema.name}".`
         )
       }
-      const linked = await lookup(
+      // We can look for a nested linked entity and then search on the parent by
+      // the linked entity id.
+      linked = await lookup(
         getSchema(prop.linkedEntitySchema),
         nested,
         value
@@ -82,13 +90,19 @@ export const createApiLookup = (url: string): EntityLookUp => {
       cache[key] = data = getCacheEntry(url, schema, field)
     }
     // We already have a cache of the entity_field pair.
+    const updateLookup = (res: LookupMaterializedEntity | undefined | null) => {
+      if (!res || !linked) {
+        return res || null
+      }
+      return { ...res, lookupValue: linked.lookupValue }
+    }
     const items = await data
     if (typeof value === "string") {
-      return items[value] || null
+      return updateLookup(items[value])
     }
     for (const v of value) {
       if (items[v]) {
-        return items[v]
+        return updateLookup(items[v])
       }
     }
     return null

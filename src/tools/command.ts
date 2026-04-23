@@ -8,6 +8,7 @@ import {
   TrackedMappingErrors
 } from "./importer"
 import fs from "node:fs"
+import { randomUUID } from "crypto"
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -70,6 +71,7 @@ if (cmd === "inspect" && args.length >= 2) {
     })
     const MAX_ROWS_ARRAY_LENGTH = 6
     errors.forEach((e) => {
+      e.count = e.rowNumbers.length
       if (e.rowNumbers.length > MAX_ROWS_ARRAY_LENGTH) {
         // Limit to first rows and add a note.
         const kept = MAX_ROWS_ARRAY_LENGTH - 1
@@ -121,7 +123,7 @@ if (cmd === "inspect" && args.length >= 2) {
       id: `${schemaName}.${schemaName}.${update.entityRef.id}`,
       root: update.entityRef,
       changeSet: {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         author: "CSV importer script",
         changes: [update],
         comments: `Imported from CSV file ${filename} on ${new Date().toISOString()}`,

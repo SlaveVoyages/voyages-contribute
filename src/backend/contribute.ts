@@ -13,6 +13,7 @@ import { EntitySchema } from "../models/entities"
 import { MaterializedEntity, materializeNew } from "../models/materialization"
 import { DataResolver } from "../models/query"
 import { fetchEntities } from "./entityFetch"
+import { randomUUID } from "crypto"
 
 const createEmptyChangeSet = (): ChangeSet => ({
   author: "",
@@ -23,7 +24,7 @@ const createEmptyChangeSet = (): ChangeSet => ({
   title: ""
 })
 
-const newUid = self.crypto.randomUUID
+const newUid = randomUUID
 
 const createEmptyContrib = (root: EntityRef) => ({
   id: newUid(),

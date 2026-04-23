@@ -1,4 +1,5 @@
 import "reflect-metadata"
+import fs from "fs"
 import {
   Entity,
   Column,
@@ -146,18 +147,12 @@ export class ContributionEntity implements Contribution {
   decisionComments?: string
 }
 
-// Database connection (SQLite)
+// Database connection
 
-const DATABASE = process.env.CONTRIB_DB_PATH || "./contrib.db"
+const DB_TYPE = process.env.CONTRIB_DB_TYPE || "sqlite"
 const IS_DEVELOPMENT = process.env.NODE_ENV === "development"
 
-if (IS_DEVELOPMENT) {
-  console.log(`Running in development mode, using database at: ${DATABASE}`)
-}
-
-export const AppDataSource = new DataSource({
-  type: "sqlite",
-  database: DATABASE,
+const sharedOptions = {
   synchronize: IS_DEVELOPMENT,
   logging: true,
   entities: [
@@ -169,7 +164,57 @@ export const AppDataSource = new DataSource({
   ],
   subscribers: [],
   migrations: []
-})
+}
+
+const parsePort = (raw: string | undefined): number => {
+  const port = Number(raw ?? "3306")
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(
+      `CONTRIB_DB_PORT must be an integer in 1..65535; got "${raw}".`
+    )
+  }
+  return port
+}
+
+const readSslCa = (caPath: string): Buffer => {
+  try {
+    return fs.readFileSync(caPath)
+  } catch (err) {
+    throw new Error(
+      `Failed to read CONTRIB_DB_SSL_CA at "${caPath}": ${(err as Error).message}`
+    )
+  }
+}
+
+const createDataSource = (): DataSource => {
+  if (DB_TYPE === "mysql") {
+    console.log(`Using MySQL database at ${process.env.CONTRIB_DB_HOST || "localhost"}`)
+    return new DataSource({
+      ...sharedOptions,
+      type: "mysql",
+      host: process.env.CONTRIB_DB_HOST || "localhost",
+      port: parsePort(process.env.CONTRIB_DB_PORT),
+      username: process.env.CONTRIB_DB_USER || "root",
+      password: process.env.CONTRIB_DB_PASSWORD || "",
+      database: process.env.CONTRIB_DB_NAME || "voyages_contribute",
+      charset: "utf8mb4",
+      ssl: process.env.CONTRIB_DB_SSL_CA
+        ? { ca: readSslCa(process.env.CONTRIB_DB_SSL_CA) }
+        : process.env.CONTRIB_DB_SSL !== "false"
+          ? { rejectUnauthorized: true }
+          : undefined
+    })
+  }
+  const database = process.env.CONTRIB_DB_PATH || "./contrib.db"
+  console.log(`Using SQLite database at: ${database}`)
+  return new DataSource({
+    ...sharedOptions,
+    type: "sqlite",
+    database
+  })
+}
+
+export const AppDataSource = createDataSource()
 
 const contribAllRelations = ["changeSet", "reviews", "reviews.changeSet", "media", "batch"]
 
@@ -222,6 +267,10 @@ export class DatabaseService {
     return this.batchRepository.findOne({
       where: { title }
     })
+  }
+
+  async getBatchById(batchId: number): Promise<PublicationBatchEntity | null> {
+    return this.batchRepository.findOne({ where: { id: batchId } })
   }
 
   async listContributions(
@@ -528,6 +577,20 @@ export class DatabaseService {
   async deleteBatch(batchId: number): Promise<boolean> {
     const result = await this.batchRepository.delete(batchId)
     return (result.affected ?? 0) > 0
+  }
+
+  async updateBatch(
+    batchId: number,
+    data: { title?: string; comments?: string }
+  ): Promise<PublicationBatchEntity | null> {
+    if (!data.title && !data.comments) {
+      return this.getBatchById(batchId)
+    }
+    await this.batchRepository.update(batchId, {
+      ...(data.title !== undefined ? { title: data.title } : {}),
+      ...(data.comments !== undefined ? { comments: data.comments } : {})
+    })
+    return this.getBatchById(batchId)
   }
 }
 

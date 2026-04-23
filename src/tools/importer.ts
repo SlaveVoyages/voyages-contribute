@@ -11,18 +11,19 @@ import {
   TableChange
 } from "../models"
 import { randomUUID } from "crypto"
+import { LookupMaterializedEntity } from "./lookup"
 
 export interface DataMappingBase {
   kind:
-    | "direct"
-    | "linked"
-    | "owned"
-    | "ownedList"
-    | "const"
-    | "conditional"
-    | "multiple"
-    | "table"
-    | "ignored"
+  | "direct"
+  | "linked"
+  | "owned"
+  | "ownedList"
+  | "const"
+  | "conditional"
+  | "multiple"
+  | "table"
+  | "ignored"
   targetField: string
 }
 
@@ -128,18 +129,19 @@ export interface EntityLookUp {
     schema: EntitySchema,
     field: string,
     value: string | string[]
-  ) => Promise<MaterializedEntity | null>
+  ) => Promise<LookupMaterializedEntity | null>
 }
 
 const applyFormula = <TOut = string>(
-  formula: ((x: string) => TOut | null) | undefined,
-  value: string | undefined
+  formula: ((x: string, localContext?: Record<string, string>) => TOut | null) | undefined,
+  value: string | undefined,
+  localContext?: Record<string, string>
 ): TOut | string | null => {
   if (formula === undefined || !value) {
     return value ?? null
   }
   try {
-    return formula(value)
+    return formula(value, localContext)
   } catch (error) {
     console.error(`Error applying formula "${formula}":`, error)
     return value
@@ -166,7 +168,7 @@ const mkLookupError = (
   kind: "lookup" as const,
   schema: schema.name,
   field: typeof property === "string" ? property : property.label,
-  value: Array.isArray(value) ? value.join(";") : String(value),
+  value: Array.isArray(value) ? value.join("|") : String(value),
   hash: () => `${schema.name}_${value}`
 })
 
@@ -257,16 +259,16 @@ export const MapRow = async (
         currentSchema
       )
       const header = resolveBinding(mapping.header, localContext)
-      const value = applyFormula(mapping.formula, row[header])
+      const value = applyFormula(mapping.formula, row[header], localContext)
       return !value || value.trim() === ""
         ? []
         : [
-            {
-              kind: "direct",
-              property: property.uid,
-              changed: value.trim()
-            }
-          ]
+          {
+            kind: "direct",
+            property: property.uid,
+            changed: value.trim()
+          }
+        ]
     }
     if (mapping.kind === "linked") {
       const property = getProperty(
@@ -280,7 +282,7 @@ export const MapRow = async (
       let value: string | string[] | null | undefined = row[header]
       if (mapping.lookupFormula && value) {
         // Apply the lookup formula to the value
-        value = applyFormula(mapping.lookupFormula, value)
+        value = applyFormula(mapping.lookupFormula, value, localContext)
       }
       if (!value || (typeof value === "string" && value.trim() === "")) {
         return []
@@ -288,18 +290,18 @@ export const MapRow = async (
       const referencedSchema = getSchema(property.linkedEntitySchema)
       const entity: MaterializedEntity | null = mapping.lookupField
         ? await lookup.lookup(
-            referencedSchema,
-            mapping.lookupField,
-            typeof value === "string" ? value.trim() : value
-          )
+          referencedSchema,
+          mapping.lookupField,
+          typeof value === "string" ? value.trim() : value
+        )
         : null
       // If createIfMissing is specified and lookup fails, create new entity
       if (entity === null && mapping.createIfMissing) {
-        const createChanges = await Promise.all(
-          mapping.createIfMissing.importUpdates.map((m) =>
-            processMapping(m, referencedSchema, localContext)
-          )
-        )
+        const createChanges: PropertyChange[] = []
+        for (const m of mapping.createIfMissing.importUpdates) {
+          const changes = await processMapping(m, referencedSchema, localContext)
+          createChanges.push(...changes)
+        }
         let linkedId: string | undefined = undefined
         if (mapping.createIfMissing.canonicalId) {
           // Compute a canonical ID for the new entity
@@ -309,7 +311,7 @@ export const MapRow = async (
               linkedId += String(idMapping.value)
             } else if (idMapping.kind === "direct") {
               const header = resolveBinding(idMapping.header, localContext)
-              const idValue = applyFormula(idMapping.formula, row[header])
+              const idValue = applyFormula(idMapping.formula, row[header], localContext)
               linkedId += idValue ? idValue.toString() : undefined
             }
           }
@@ -327,6 +329,11 @@ export const MapRow = async (
         ]
       } else if (entity === null) {
         errors.push(mkLookupError(referencedSchema, property, value))
+      } else if ((entity as LookupMaterializedEntity).lookupValue) {
+        // Setup an entry in the local contex to indicate which value was
+        // matched in the lookup.
+        localContext[`__lookup__${mapping.targetField}`] =
+          (entity as LookupMaterializedEntity).lookupValue
       }
       return [
         {
@@ -355,13 +362,13 @@ export const MapRow = async (
       return ownedChanges.length === 0
         ? []
         : [
-            {
-              kind: "owned",
-              property: property.uid,
-              ownedEntity: getBlank(ownedSchema.name),
-              changes: ownedChanges
-            }
-          ]
+          {
+            kind: "owned",
+            property: property.uid,
+            ownedEntity: getBlank(ownedSchema.name),
+            changes: ownedChanges
+          }
+        ]
     }
     if (mapping.kind === "conditional") {
       // Check if any required fields are non-empty.
@@ -371,15 +378,14 @@ export const MapRow = async (
         return value && value.trim() !== ""
       })
       // Apply the nested mapping only if at least one field is non-empty.
-      return !hasNonEmptyField
-        ? []
-        : (
-            await Promise.all(
-              mapping.mappings.map((m) =>
-                processMapping(m, currentSchema, localContext)
-              )
-            )
-          ).flat()
+      const res: PropertyChange[] = []
+      if (hasNonEmptyField) {
+        for (const m of mapping.mappings) {
+          const changes = await processMapping(m, currentSchema, localContext)
+          res.push(...changes)
+        }
+      }
+      return res
     }
     if (mapping.kind === "ownedList") {
       const property = getProperty(
@@ -392,13 +398,11 @@ export const MapRow = async (
       const itemSchema = getSchema(property.linkedEntitySchema)
       const addedEntities: Omit<OwnedEntityChange, "property">[] = []
       for (const itemMapping of mapping.addedToList) {
-        const itemChanges = (
-          await Promise.all(
-            itemMapping.importUpdates.map((m) =>
-              processMapping(m, itemSchema, localContext)
-            )
-          )
-        ).flat()
+        const itemChanges: PropertyChange[] = []
+        for (const m of itemMapping.importUpdates) {
+          const changes = await processMapping(m, itemSchema, localContext)
+          itemChanges.push(...changes)
+        }
         if (itemChanges.length > 0) {
           addedEntities.push({
             kind: "owned" as const,
@@ -410,13 +414,13 @@ export const MapRow = async (
       return addedEntities.length === 0
         ? []
         : [
-            {
-              kind: "ownedList",
-              property: property.uid,
-              removed: [],
-              modified: addedEntities
-            }
-          ]
+          {
+            kind: "ownedList",
+            property: property.uid,
+            removed: [],
+            modified: addedEntities
+          }
+        ]
     }
     if (mapping.kind === "multiple") {
       const allChanges: PropertyChange[] = []
@@ -424,10 +428,7 @@ export const MapRow = async (
       const merged: OwnedEntityListChange[] = []
       for (const binding of mapping.bindings) {
         // Merge contexts.
-        const localContext = {
-          ...context,
-          ...binding
-        }
+        Object.assign(localContext, binding)
         // Process each nested mapping with the current context.
         for (const nestedMapping of mapping.mappings) {
           const nestedChanges = await processMapping(
@@ -468,7 +469,7 @@ export const MapRow = async (
         changes: mapping.mappings.reduce(
           (agg, item) => {
             const header = resolveBinding(item.header, localContext)
-            const value = applyFormula(item.formula, row[header])
+            const value = applyFormula(item.formula, row[header], localContext)
             if (value && value.trim() !== "") {
               agg[item.targetField] = value.trim()
             }
@@ -485,11 +486,12 @@ export const MapRow = async (
     throw new Error(`Unknown mapping kind: ${(mapping as any).kind}`)
   }
   // Process the mapping and create entity changes
-  return processMapping(mapping, schema, context)
+  return processMapping(mapping, schema, { ...context })
 }
 
 export interface TrackedMappingErrors {
   error: MappingError
+  count: number
   rowNumbers: (number | string)[]
 }
 
@@ -517,6 +519,7 @@ export const MapDataSourceToChangeSets = async (
       for (const e of rowErrors) {
         const { rowNumbers } = (allErrors[e.hash()] ??= {
           error: e,
+          count: 0,
           rowNumbers: []
         })
         if (rowNumbers.at(-1) !== i + 1) {

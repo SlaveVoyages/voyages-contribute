@@ -1,5 +1,27 @@
 import { DataMapping } from "./importer"
 
+const extractSourcePrefixes =
+  (d: string) => {
+    const values: [prefix: string, suffix: string][] = []
+    const original = d
+    while (true) {
+      const idxSep = d.lastIndexOf(",")
+      if (idxSep < 0) {
+        break
+      }
+      d = d.slice(0, idxSep).trim()
+      if (d !== "") {
+        values.push([d, original.slice(idxSep + 1).trim()])
+      }
+    }
+    if (original.trim() !== "") {
+      values.push([original.trim(), ""])
+    }
+    return values.length > 0
+      ? values
+      : null
+  }
+
 // Main voyage mapping: configure this to map CSV rows to ChangeSets.
 export const voyageMapping: DataMapping = {
   kind: "conditional",
@@ -1045,26 +1067,22 @@ export const voyageMapping: DataMapping = {
                   header: "$sourceHeader",
                   lookupField: "Short reference.Name",
                   lookupFormula: (d: string) => {
-                    const values: string[] = []
-                    while (true) {
-                      const idxSep = d.lastIndexOf(",")
-                      if (idxSep < 0) {
-                        break
-                      }
-                      d = d.slice(0, idxSep).trim()
-                      values.push(d)
-                    }
-                    return values.length > 0 ? values : null
+                    const values = extractSourcePrefixes(d)
+                    return values ? values.map(([prefix,]) => prefix) : null
                   }
                 },
                 {
                   kind: "direct",
                   targetField: "Page range",
                   header: "$sourceHeader",
-                  formula: (d: string) => {
-                    // TODO: Check this with commas in the title (e.g. "Capela, José")
-                    const split = d.indexOf(",")
-                    return split <= 0 ? null : d.substring(split + 1).trim()
+                  formula: (d: string, ctx?: Record<string, string>) => {
+                    const values = extractSourcePrefixes(d)
+                    if (values && ctx && ctx["__lookup__Source"]) {
+                      const lookupValue = ctx["__lookup__Source"]
+                      const match = values.find (([prefix,]) => prefix === lookupValue)
+                      return match ? match[1] : null
+                    }
+                    return null
                   }
                 }
               ]
