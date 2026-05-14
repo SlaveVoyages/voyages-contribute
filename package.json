@@ -1,7 +1,7 @@
 {
   "name": "@slavevoyages/voyages-contribute",
   "private": false,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "repository": {
     "type": "git",

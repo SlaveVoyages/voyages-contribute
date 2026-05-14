@@ -37,3 +37,6 @@ output/
 
 uploads/
 errors.json
+
+.claude
+slavevoyages*.tgz
