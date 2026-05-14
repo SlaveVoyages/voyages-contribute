@@ -79,7 +79,11 @@ export const getJob = (jobId: string): JobState | undefined => {
   return jobs.get(jobId)
 }
 
-export const markRunning = (jobId: string, total: number): void => {
+export const markRunning = (
+  jobId: string,
+  total: number,
+  initialProcessed = 0
+): void => {
   const job = jobs.get(jobId)
   if (!job) {
     return
@@ -87,6 +91,7 @@ export const markRunning = (jobId: string, total: number): void => {
   job.status = "running"
   job.startedAt = Date.now()
   job.progress.total = total
+  job.progress.processed = initialProcessed
 }
 
 export const bumpProgress = (jobId: string): void => {

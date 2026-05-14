@@ -16,10 +16,7 @@ import {
   setErrors
 } from "./jobManager"
 import { AllMappings } from "../tools/allMappings"
-import {
-  getCSVHeadersFromBuffer,
-  importCSVFromBuffer
-} from "../tools/csv"
+import { getCSVHeaders, importCSVFromBuffer } from "../tools/csv"
 import { createDirectLookup } from "../tools/lookup"
 import {
   debugCheckHeaders,
@@ -104,6 +101,23 @@ const wrapMulter =
         .json({ error: "Invalid upload", details: (err as Error).message })
     })
   }
+
+/**
+ * Count the unique CSV row numbers that contributed at least one mapping
+ * error. Must be called BEFORE `truncateRowNumbers`, since truncation
+ * replaces trailing entries with a string sentinel.
+ */
+const countUniqueErroredRows = (errors: TrackedMappingErrors[]): number => {
+  const rows = new Set<number>()
+  for (const e of errors) {
+    for (const r of e.rowNumbers) {
+      if (typeof r === "number") {
+        rows.add(r)
+      }
+    }
+  }
+  return rows.size
+}
 
 const truncateRowNumbers = (
   errors: TrackedMappingErrors[],
@@ -283,13 +297,16 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
     const buffer = await fs.readFile(filePath)
     const errors: TrackedMappingErrors[] = []
     const lookup = createDirectLookup(resolver)
-    const updates = await importCSVFromBuffer(
+    const { updates, rowCount } = await importCSVFromBuffer(
       buffer,
       schemaName,
       lookup,
       errors,
       args.maxRows
     )
+    // Compute the unique-errored-row count BEFORE truncation, since
+    // truncation appends a string sentinel that would confuse Set sizing.
+    const erroredRowCount = countUniqueErroredRows(errors)
     if (errors.length > 0) {
       setErrors(jobId, sortErrors(truncateRowNumbers(errors)))
       if (onError === "abort") {
@@ -300,7 +317,12 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
         return
       }
     }
-    markRunning(jobId, updates.length)
+    // Progress tracks CSV rows: `total` is the number of input rows the
+    // importer looked at (after `maxRows`), and `processed` counts rows that
+    // have been "decided" — either skipped due to mapping errors or pushed
+    // to the DB. Start processed at the errored-row count, then bump per
+    // successful insert.
+    markRunning(jobId, rowCount, erroredRowCount)
     // Resolve or create the publication batch for this import. The caller may
     // override the auto-generated title/comments via the metadata payload; if
     // a batch with the resolved title already exists we reuse it (mirrors the
@@ -409,47 +431,52 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
     limits: { fileSize: CSV_SIZE_LIMIT, files: 1 }
   })
 
-  const csvMemoryUpload = multer({
-    storage: multer.memoryStorage(),
-    fileFilter: CSV_FILE_FILTER,
-    limits: { fileSize: CSV_SIZE_LIMIT, files: 1 }
-  })
-
   router.post(
     "/inspect-batched-contributions/:entityName",
     authenticateJWT,
     requireEditor,
-    wrapMulter(csvMemoryUpload.single("file")),
-    (req: Request, res: Response) => {
-      const { entityName } = req.params
-      if (!Object.prototype.hasOwnProperty.call(AllMappings, entityName)) {
-        res
-          .status(404)
-          .json({ error: "Unknown entity", details: entityName })
-        return
-      }
-      if (!req.file) {
-        res.status(400).json({
-          error: "No file uploaded",
-          details: "A CSV file must be provided in the 'file' field"
+    // Disk-storage even for inspect — we only read the first row to extract
+    // headers, but the whole file had to land somewhere first; doing it in
+    // memory under the 100MB CSV limit would buffer the entire upload in RAM
+    // per concurrent request. Disk + unlink-in-finally is the cheap fix.
+    wrapMulter(csvDiskUpload.single("file")),
+    async (req: Request, res: Response) => {
+      const filePath = req.file?.path
+      try {
+        const { entityName } = req.params
+        if (!Object.prototype.hasOwnProperty.call(AllMappings, entityName)) {
+          res
+            .status(404)
+            .json({ error: "Unknown entity", details: entityName })
+          return
+        }
+        if (!req.file) {
+          res.status(400).json({
+            error: "No file uploaded",
+            details: "A CSV file must be provided in the 'file' field"
+          })
+          return
+        }
+        const mappingEntry = AllMappings[entityName]
+        const mappingHeaders = debugCheckHeaders(mappingEntry.mapping)
+        const csvHeaders = await getCSVHeaders(req.file.path)
+        const csvSet = new Set(csvHeaders)
+        const csvHeadersNotInMapping = csvHeaders.filter(
+          (h) => !mappingHeaders.has(h)
+        )
+        const mappingHeadersNotInCsv = [...mappingHeaders].filter(
+          (h) => !csvSet.has(h)
+        )
+        res.status(200).json({
+          entityName,
+          csvHeadersNotInMapping,
+          mappingHeadersNotInCsv
         })
-        return
+      } finally {
+        if (filePath) {
+          await fs.unlink(filePath).catch(() => {})
+        }
       }
-      const mappingEntry = AllMappings[entityName]
-      const mappingHeaders = debugCheckHeaders(mappingEntry.mapping)
-      const csvHeaders = getCSVHeadersFromBuffer(req.file.buffer)
-      const csvSet = new Set(csvHeaders)
-      const csvHeadersNotInMapping = csvHeaders.filter(
-        (h) => !mappingHeaders.has(h)
-      )
-      const mappingHeadersNotInCsv = [...mappingHeaders].filter(
-        (h) => !csvSet.has(h)
-      )
-      res.status(200).json({
-        entityName,
-        csvHeadersNotInMapping,
-        mappingHeadersNotInCsv
-      })
     }
   )
 

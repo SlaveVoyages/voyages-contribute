@@ -91,17 +91,24 @@ export const importCSV = (
  * In-process variant of `importCSV` for callers that already have a CSV buffer
  * and want to inject their own `EntityLookUp` (e.g. the server, which uses an
  * in-process resolver instead of going back through HTTP).
+ *
+ * Returns the produced updates alongside `rowCount`, the number of CSV rows
+ * the importer actually looked at (capped by `maxRows` if supplied). Callers
+ * use this to drive progress accounting that reflects the input CSV rather
+ * than the post-mapping update count, which excludes rows that errored.
  */
-export const importCSVFromBuffer = (
+export const importCSVFromBuffer = async (
   buffer: Buffer,
   schemaName: string,
   lookup: EntityLookUp,
   errors: TrackedMappingErrors[],
   maxRows?: number
-): Promise<EntityUpdate[]> => {
+): Promise<{ updates: EntityUpdate[]; rowCount: number }> => {
   const { data } = parseCSVBuffer(buffer)
   const { mapping, schema } = resolveMapping(schemaName)
-  return MapDataSourceToChangeSets(
+  const rowCount =
+    maxRows !== undefined ? Math.min(data.length, maxRows) : data.length
+  const updates = await MapDataSourceToChangeSets(
     data,
     mapping,
     schema,
@@ -109,4 +116,5 @@ export const importCSVFromBuffer = (
     errors,
     maxRows
   )
+  return { updates, rowCount }
 }

@@ -17,21 +17,30 @@ type SchemaFieldLoader = (
   field: string
 ) => Promise<Record<string, LookupMaterializedEntity>>
 
-const indexByField = (
+export const indexByField = (
   items: LookupMaterializedEntity[],
   field: string
 ): Record<string, LookupMaterializedEntity> => {
   const data: Record<string, LookupMaterializedEntity> = {}
   const nonUnique = new Set<string>()
   for (const item of items) {
-    const rowKey = String(item.data[field])
-    if (rowKey) {
-      if (data[rowKey]) {
-        nonUnique.add(rowKey)
-      }
-      item.lookupValue = rowKey
-      data[rowKey] = item
+    const raw = item.data[field]
+    // Skip nullish / empty values. Previously `String(item.data[field])` would
+    // turn `null`/`undefined` into the literal strings "null"/"undefined", so
+    // a row with a NULL column got indexed under "null" and a CSV cell whose
+    // value happened to be the string "null" would spuriously match it.
+    if (raw === null || raw === undefined) {
+      continue
     }
+    const rowKey = String(raw)
+    if (rowKey === "") {
+      continue
+    }
+    if (data[rowKey]) {
+      nonUnique.add(rowKey)
+    }
+    item.lookupValue = rowKey
+    data[rowKey] = item
   }
   for (const key of nonUnique) {
     delete data[key]

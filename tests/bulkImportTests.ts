@@ -15,6 +15,7 @@ import {
   setErrors
 } from "../src/backend/jobManager"
 import { TrackedMappingErrors } from "../src/tools/importer"
+import { indexByField, LookupMaterializedEntity } from "../src/tools/lookup"
 
 beforeEach(() => {
   __resetJobsForTests()
@@ -161,6 +162,70 @@ test("jobManager: setErrors attaches the truncated error list", () => {
 
 test("jobManager: getJob returns undefined for unknown ids", () => {
   expect(getJob("not-a-real-job-id")).toBeUndefined()
+})
+
+test("jobManager: markRunning accepts an initial processed count", () => {
+  // This is how runImport seeds progress: rows that had mapping errors are
+  // already "decided" before any contribution is inserted.
+  const job = createJob({
+    entityName: "Voyage",
+    filename: "x.csv",
+    author: "u"
+  })
+  markRunning(job.jobId, 10, 4)
+  const s = getJob(job.jobId)!
+  expect(s.status).toBe("running")
+  expect(s.progress).toEqual({ processed: 4, total: 10 })
+  bumpProgress(job.jobId)
+  expect(getJob(job.jobId)?.progress.processed).toBe(5)
+})
+
+const mkLookupItem = (
+  id: number,
+  data: Record<string, any>
+): LookupMaterializedEntity =>
+  ({
+    entityRef: { type: "existing", id, schema: "X" },
+    data,
+    state: "lazy",
+    lookupValue: ""
+  }) as LookupMaterializedEntity
+
+test("indexByField: skips null/undefined raw values (no 'null'/'undefined' key)", () => {
+  // Previously String(null)/String(undefined) became the literal strings
+  // "null"/"undefined" and indexed those rows under those keys, so a CSV
+  // value that happened to be the string "null" would match a NULL DB row.
+  const items = [
+    mkLookupItem(1, { name: null }),
+    mkLookupItem(2, { name: undefined }),
+    mkLookupItem(3, { name: "Real Name" })
+  ]
+  const idx = indexByField(items, "name")
+  expect(Object.keys(idx).sort()).toEqual(["Real Name"])
+  expect(idx["null"]).toBeUndefined()
+  expect(idx["undefined"]).toBeUndefined()
+})
+
+test("indexByField: skips empty-string values", () => {
+  const idx = indexByField(
+    [mkLookupItem(1, { name: "" }), mkLookupItem(2, { name: "Real" })],
+    "name"
+  )
+  expect(Object.keys(idx)).toEqual(["Real"])
+})
+
+test("indexByField: drops keys that appeared on more than one row (non-unique)", () => {
+  const idx = indexByField(
+    [
+      mkLookupItem(1, { name: "Same" }),
+      mkLookupItem(2, { name: "Same" }),
+      mkLookupItem(3, { name: "Unique" })
+    ],
+    "name"
+  )
+  // "Same" is ambiguous so the lookup should not be able to resolve it.
+  expect(idx["Same"]).toBeUndefined()
+  expect(idx["Unique"]).toBeDefined()
 })
 
 test("parseUploadMetadata: missing/empty input uses defaults", () => {
