@@ -756,7 +756,7 @@ Content-Type: text/csv
 ### Start bulk import (async) — returns 202 { jobId }.
 ### The optional `metadata` form field is a JSON object:
 ###   {
-###     "contribStatus":        0 | 1 | 2 | 3 | 4,   // default 0 (WorkInProgress)
+###     "contribStatus":        0 | 1 | 2,           // default 0 (WorkInProgress); 1=Submitted, 2=Accepted
 ###     "onError":              "abort" | "continue",// default "abort"
 ###     "batchTitle":           string,              // default `Import of <entity> from <filename>`
 ###     "batchComments":        string,              // default auto-generated
@@ -764,7 +764,9 @@ Content-Type: text/csv
 ###     "contributionComments": string,              // template; default `Imported from CSV file <filename> on <ISO date>`
 ###     "maxRows":              positive integer     // optional cap on rows processed (useful for smoke tests)
 ###   }
-### Status legend: 0=WorkInProgress, 1=Submitted, 2=Accepted, 3=Rejected, 4=Published.
+### Status legend: 0=WorkInProgress, 1=Submitted, 2=Accepted.
+### Rejected (3) and Published (4) are end-of-lifecycle states reached via the
+### review/publish pipeline; they are not accepted on import.
 ### onError=abort rejects the whole job if any mapping errors are found;
 ### onError=continue pushes successfully mapped rows and records errors in
 ### the job state. If a batch with `batchTitle` already exists it is reused

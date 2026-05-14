@@ -46,12 +46,14 @@ interface BulkImportDeps {
   uploadDir: string
 }
 
+// Rejected and Published are deliberately excluded: a bulk CSV import is the
+// *creation* of contributions. Rejected/Published are end-of-lifecycle
+// states that should only be reached via the review/publish pipeline, not
+// asserted at insert time.
 const VALID_STATUSES = new Set<number>([
   ContributionStatus.WorkInProgress,
   ContributionStatus.Submitted,
-  ContributionStatus.Accepted,
-  ContributionStatus.Rejected,
-  ContributionStatus.Published
+  ContributionStatus.Accepted
 ])
 
 const CSV_MIME_TYPES = new Set([
@@ -160,7 +162,7 @@ export const parseUploadMetadata = (
     if (!Number.isFinite(n) || !VALID_STATUSES.has(n)) {
       return {
         error:
-          "contribStatus must be one of 0 (WorkInProgress), 1 (Submitted), 2 (Accepted), 3 (Rejected), 4 (Published)"
+          "contribStatus must be one of 0 (WorkInProgress), 1 (Submitted), 2 (Accepted). Rejected and Published are reached via review/publish, not on import."
       }
     }
     contribStatus = n

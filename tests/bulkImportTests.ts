@@ -214,6 +214,27 @@ test("parseUploadMetadata: rejects out-of-range contribStatus", () => {
   ).toBe(true)
 })
 
+test("parseUploadMetadata: rejects Rejected (3) and Published (4) statuses", () => {
+  // These are review/publish-pipeline statuses; not a valid initial state
+  // for a bulk import.
+  expect(
+    "error" in parseUploadMetadata(JSON.stringify({ contribStatus: 3 }))
+  ).toBe(true)
+  expect(
+    "error" in parseUploadMetadata(JSON.stringify({ contribStatus: 4 }))
+  ).toBe(true)
+})
+
+test("parseUploadMetadata: accepts WorkInProgress/Submitted/Accepted", () => {
+  for (const s of [0, 1, 2]) {
+    const r = parseUploadMetadata(JSON.stringify({ contribStatus: s }))
+    expect("error" in r).toBe(false)
+    if (!("error" in r)) {
+      expect(r.contribStatus).toBe(s)
+    }
+  }
+})
+
 test("parseUploadMetadata: rejects unknown onError value", () => {
   expect(
     "error" in parseUploadMetadata(JSON.stringify({ onError: "panic" }))
