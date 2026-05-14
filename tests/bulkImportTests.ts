@@ -143,7 +143,7 @@ test("jobManager: failJob captures a reason and timestamps", () => {
   expect(final.finishedAt).toBeDefined()
 })
 
-test("jobManager: setErrors attaches the truncated error list", () => {
+test("jobManager: setErrors stores the supplied error list verbatim", () => {
   const job = createJob({
     entityName: "Voyage",
     filename: "x.csv",

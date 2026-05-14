@@ -334,20 +334,45 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
     const resolvedBatchComments =
       args.batchComments ??
       `Batch created for bulk import of ${schemaName} from ${filename}`
-    const existingBatch = await dbService.getBatchByTitle(resolvedBatchTitle)
-    if (existingBatch && existingBatch.published) {
+    // Resolve (or create) the publication batch. `publication_batches.title`
+    // is uniquely indexed, so a naive pre-check + create has a race window
+    // between two concurrent imports with the same `batchTitle`: both see
+    // null from getBatchByTitle and both try to create, one of them losing
+    // with a duplicate-key error. Catch that case and re-fetch — same
+    // outcome as if it had been visible during the pre-check.
+    const preExistingBatch = await dbService.getBatchByTitle(resolvedBatchTitle)
+    if (preExistingBatch && preExistingBatch.published) {
       failJob(
         jobId,
         `Batch "${resolvedBatchTitle}" is already published; choose a different batchTitle to import into a new batch`
       )
       return
     }
-    const batchEntity =
-      existingBatch ??
-      (await dbService.createPublicationBatch({
-        title: resolvedBatchTitle,
-        comments: resolvedBatchComments
-      }))
+    let batchEntity = preExistingBatch
+    if (!batchEntity) {
+      try {
+        batchEntity = await dbService.createPublicationBatch({
+          title: resolvedBatchTitle,
+          comments: resolvedBatchComments
+        })
+      } catch (createErr) {
+        // Most likely a unique-title collision from a concurrent import that
+        // won the create. Re-fetch; if there really isn't one, the original
+        // error wasn't a race and should propagate.
+        const racedBatch = await dbService.getBatchByTitle(resolvedBatchTitle)
+        if (!racedBatch) {
+          throw createErr
+        }
+        if (racedBatch.published) {
+          failJob(
+            jobId,
+            `Batch "${resolvedBatchTitle}" is already published; choose a different batchTitle to import into a new batch`
+          )
+          return
+        }
+        batchEntity = racedBatch
+      }
+    }
     const batch: PublicationBatch = {
       id: batchEntity.id,
       title: batchEntity.title,

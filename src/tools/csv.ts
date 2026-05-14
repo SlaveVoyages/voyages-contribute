@@ -1,5 +1,5 @@
 // Node.js file reading
-import fs from "fs"
+import fs, { createReadStream } from "fs"
 import Papa, { ParseConfig } from "papaparse"
 import {
   EntityLookUp,
@@ -37,16 +37,48 @@ export const parseCSVBuffer = (
     ...options
   })
 
-export const getCSVHeaders = async (filename: string) =>
-  new Promise<string[]>((resolve) => {
-    parseCSV(filename, {
-      step: (results, parser) => {
-        const headers = Object.keys(results.data || {})
-        parser.abort() // Stop parsing after the first row
-        resolve(headers.map((s) => s.toLowerCase()))
+/**
+ * Async, streaming header-only reader. Walks just enough of the file to find
+ * the first newline, parses that line as CSV, and returns the lowercase
+ * header list. Avoids the previous design's two problems for HTTP callers:
+ * a synchronous `readFileSync` blocked the event loop, and the full file
+ * (up to the 100MB multer limit) was pulled into RAM only to extract a
+ * single line. `parseCSV` below stays sync because its CLI caller doesn't
+ * care about either property.
+ */
+export const getCSVHeaders = async (filename: string): Promise<string[]> => {
+  const HEADER_BYTE_LIMIT = 1 * 1024 * 1024 // 1MB cap on a single header line
+  const stream = createReadStream(filename, { encoding: "utf8" })
+  let buffer = ""
+  try {
+    for await (const chunk of stream) {
+      buffer += chunk
+      const newlineIdx = buffer.indexOf("\n")
+      if (newlineIdx >= 0) {
+        buffer = buffer.slice(0, newlineIdx)
+        break
       }
-    })
+      if (buffer.length > HEADER_BYTE_LIMIT) {
+        throw new Error(
+          `CSV header line exceeds ${HEADER_BYTE_LIMIT} bytes; the file may not be a valid CSV.`
+        )
+      }
+    }
+  } finally {
+    stream.destroy()
+  }
+  // Strip trailing carriage return left over from CRLF line endings.
+  if (buffer.endsWith("\r")) {
+    buffer = buffer.slice(0, -1)
+  }
+  const { data } = Papa.parse<string[]>(buffer, {
+    header: false,
+    skipEmptyLines: true,
+    dynamicTyping: false
   })
+  const row = data[0] ?? []
+  return row.map((s) => String(s).toLowerCase())
+}
 
 export const getCSVHeadersFromBuffer = (buffer: Buffer): string[] => {
   let headers: string[] = []
