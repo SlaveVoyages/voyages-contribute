@@ -59,9 +59,7 @@ const VALID_STATUSES = new Set<number>([
 const CSV_MIME_TYPES = new Set([
   "text/csv",
   "application/csv",
-  "application/vnd.ms-excel",
-  // Some clients send this for `.csv` when they can't detect the MIME.
-  "application/octet-stream"
+  "application/vnd.ms-excel"
 ])
 
 const CSV_FILE_FILTER: multer.Options["fileFilter"] = (_req, file, cb) => {
@@ -73,6 +71,39 @@ const CSV_FILE_FILTER: multer.Options["fileFilter"] = (_req, file, cb) => {
 }
 
 const CSV_SIZE_LIMIT = 100 * 1024 * 1024 // 100 MB
+
+/**
+ * Wrap a multer middleware so its errors land as a 400 instead of being
+ * forwarded to the global 500 handler (which would echo a stack trace). Also
+ * cleans up any partial disk file that multer wrote before failing.
+ */
+const wrapMulter =
+  (upload: (req: Request, res: Response, next: NextFunction) => void) =>
+  (req: Request, res: Response, next: NextFunction): void => {
+    upload(req, res, async (err: unknown) => {
+      if (!err) {
+        next()
+        return
+      }
+      if (req.file?.path) {
+        await fs.unlink(req.file.path).catch(() => {})
+      }
+      if (err instanceof multer.MulterError) {
+        const detail =
+          err.code === "LIMIT_FILE_SIZE"
+            ? `Maximum CSV size is ${CSV_SIZE_LIMIT / (1024 * 1024)}MB`
+            : err.code === "LIMIT_UNEXPECTED_FILE"
+              ? "Use 'file' as the multipart field name for the CSV"
+              : err.message
+        res.status(400).json({ error: "Upload error", details: detail })
+        return
+      }
+      // fileFilter rejection or any other error in the upload chain.
+      res
+        .status(400)
+        .json({ error: "Invalid upload", details: (err as Error).message })
+    })
+  }
 
 const truncateRowNumbers = (
   errors: TrackedMappingErrors[],
@@ -273,13 +304,22 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
     // Resolve or create the publication batch for this import. The caller may
     // override the auto-generated title/comments via the metadata payload; if
     // a batch with the resolved title already exists we reuse it (mirrors the
-    // CLI's 409-handling at command.ts:108-109).
+    // CLI's 409-handling at command.ts:108-109) — but we refuse to import
+    // into an already-published batch, since that would silently append new
+    // contributions to a batch the publish pipeline has already finalised.
     const resolvedBatchTitle =
       args.batchTitle ?? `Import of ${schemaName} from ${filename}`
     const resolvedBatchComments =
       args.batchComments ??
       `Batch created for bulk import of ${schemaName} from ${filename}`
     const existingBatch = await dbService.getBatchByTitle(resolvedBatchTitle)
+    if (existingBatch && existingBatch.published) {
+      failJob(
+        jobId,
+        `Batch "${resolvedBatchTitle}" is already published; choose a different batchTitle to import into a new batch`
+      )
+      return
+    }
     const batchEntity =
       existingBatch ??
       (await dbService.createPublicationBatch({
@@ -357,7 +397,9 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
     filename: (_req, file, cb) => {
       const ext = path.extname(file.originalname) || ".csv"
       const nameWithoutExt = path.basename(file.originalname, ext)
-      cb(null, `${Date.now()}_${nameWithoutExt}${ext}`)
+      // Include a UUID so two uploads of the same originalname within the
+      // same millisecond don't collide and clobber each other on disk.
+      cb(null, `${Date.now()}_${randomUUID()}_${nameWithoutExt}${ext}`)
     }
   })
 
@@ -377,11 +419,10 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
     "/inspect-batched-contributions/:entityName",
     authenticateJWT,
     requireEditor,
-    csvMemoryUpload.single("file"),
+    wrapMulter(csvMemoryUpload.single("file")),
     (req: Request, res: Response) => {
       const { entityName } = req.params
-      const mappingEntry = AllMappings[entityName]
-      if (!mappingEntry) {
+      if (!Object.prototype.hasOwnProperty.call(AllMappings, entityName)) {
         res
           .status(404)
           .json({ error: "Unknown entity", details: entityName })
@@ -394,6 +435,7 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
         })
         return
       }
+      const mappingEntry = AllMappings[entityName]
       const mappingHeaders = debugCheckHeaders(mappingEntry.mapping)
       const csvHeaders = getCSVHeadersFromBuffer(req.file.buffer)
       const csvSet = new Set(csvHeaders)
@@ -415,7 +457,7 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
     "/upload-batched-contributions/:entityName",
     authenticateJWT,
     requireEditor,
-    csvDiskUpload.single("file"),
+    wrapMulter(csvDiskUpload.single("file")),
     async (req: Request, res: Response) => {
       const { entityName } = req.params
       const cleanup = async () => {
@@ -423,7 +465,7 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
           await fs.unlink(req.file.path).catch(() => {})
         }
       }
-      if (!AllMappings[entityName]) {
+      if (!Object.prototype.hasOwnProperty.call(AllMappings, entityName)) {
         await cleanup()
         res
           .status(404)

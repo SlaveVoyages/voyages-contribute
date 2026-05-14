@@ -34,14 +34,24 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 7127
 
-// Local-dev escape hatch: when DEV_DISABLE_AUTH=true (and we are NOT in
-// production), JWT verification is bypassed and every request is treated as
-// an authenticated Editor. Useful for poking at the API locally without
-// a Supabase project. The production check is defensive — refuse to honour
-// the flag in deployments.
-const DEV_DISABLE_AUTH =
-  process.env.DEV_DISABLE_AUTH === "true" &&
-  process.env.NODE_ENV !== "production"
+// Local-dev escape hatch: when DEV_DISABLE_AUTH=true AND NODE_ENV=development,
+// JWT verification is bypassed and every request is treated as an
+// authenticated Editor. Useful for poking at the API locally without a
+// Supabase project. We require an *explicit* "development" rather than
+// "not production" because NODE_ENV is frequently unset in staging /
+// preview / Docker environments, and a missing variable should not silently
+// open up an auth bypass. If DEV_DISABLE_AUTH is requested but NODE_ENV is
+// anything other than "development", we refuse to start at all — fail loud,
+// fail closed.
+const DEV_DISABLE_AUTH_REQUESTED = process.env.DEV_DISABLE_AUTH === "true"
+const IS_DEVELOPMENT_ENV = process.env.NODE_ENV === "development"
+if (DEV_DISABLE_AUTH_REQUESTED && !IS_DEVELOPMENT_ENV) {
+  console.error(
+    `[auth] DEV_DISABLE_AUTH=true is only honoured when NODE_ENV=development (got NODE_ENV=${process.env.NODE_ENV ?? "<unset>"}). Refusing to start.`
+  )
+  process.exit(1)
+}
+const DEV_DISABLE_AUTH = DEV_DISABLE_AUTH_REQUESTED && IS_DEVELOPMENT_ENV
 if (DEV_DISABLE_AUTH) {
   console.warn(
     "[auth] DEV_DISABLE_AUTH is enabled — JWT verification is BYPASSED. Do not use in production."
