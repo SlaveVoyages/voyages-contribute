@@ -734,3 +734,88 @@ GET {{baseUrl}}/contributions/wip
 Authorization: Bearer {{authToken}}
 
 ###
+
+### Bulk-import endpoints (require Editor role in Supabase app_metadata).
+### See docs/EDITOR_ROLES.md for how to grant the role.
+
+### Inspect headers (sync) — returns the diff between CSV headers and the
+### entity mapping's expected headers.
+POST {{baseUrl}}/inspect-batched-contributions/Voyage
+Authorization: Bearer {{authToken}}
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="voyages.csv"
+Content-Type: text/csv
+
+< ./test-files/IOA_Voyages.csv
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+###
+
+### Start bulk import (async) — returns 202 { jobId }.
+### The optional `metadata` form field is a JSON object:
+###   {
+###     "contribStatus":        0 | 1 | 2 | 3 | 4,   // default 0 (WorkInProgress)
+###     "onError":              "abort" | "continue",// default "abort"
+###     "batchTitle":           string,              // default `Import of <entity> from <filename>`
+###     "batchComments":        string,              // default auto-generated
+###     "contributionTitle":    string,              // template; default `Import of <entity> #<id>`
+###     "contributionComments": string,              // template; default `Imported from CSV file <filename> on <ISO date>`
+###     "maxRows":              positive integer     // optional cap on rows processed (useful for smoke tests)
+###   }
+### Status legend: 0=WorkInProgress, 1=Submitted, 2=Accepted, 3=Rejected, 4=Published.
+### onError=abort rejects the whole job if any mapping errors are found;
+### onError=continue pushes successfully mapped rows and records errors in
+### the job state. If a batch with `batchTitle` already exists it is reused
+### (mirrors the CLI's 409-handling).
+###
+### contributionTitle and contributionComments support placeholders that are
+### substituted per row: {id}, {entityName}, {filename}, {index} (1-based).
+# @name uploadJob
+POST {{baseUrl}}/upload-batched-contributions/Voyage
+Authorization: Bearer {{authToken}}
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="metadata"
+Content-Type: application/json
+
+{
+  "contribStatus": 0,
+  "onError": "abort",
+  "batchTitle": "IOA 2025-10-30 mapped",
+  "contributionTitle": "IOA 2025-10-30 — {entityName} #{id}",
+  "contributionComments": "Row {index} imported from {filename}"
+}
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="voyages.csv"
+Content-Type: text/csv
+
+< ./test-files/IOA_Voyages.csv
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+###
+
+@jobId = {{uploadJob.response.body.jobId}}
+
+### Poll the import job's status. Repeat until status is "completed" or
+### "failed". While running, `progress.processed` increments per row.
+GET {{baseUrl}}/upload-jobs/{{jobId}}
+Authorization: Bearer {{authToken}}
+
+###
+
+### Error case - unknown entity name
+POST {{baseUrl}}/inspect-batched-contributions/NotAnEntity
+Authorization: Bearer {{authToken}}
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="x.csv"
+Content-Type: text/csv
+
+< ./test-files/IOA_Voyages.csv
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+###

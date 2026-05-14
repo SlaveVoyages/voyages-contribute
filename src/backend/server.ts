@@ -25,6 +25,7 @@ import path from "path"
 import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
+import { createBulkImportRouter } from "./bulkImport"
 
 // Load environment variables
 dotenv.config()
@@ -32,6 +33,20 @@ dotenv.config()
 // Initialize the app
 const app = express()
 const PORT = process.env.PORT || 7127
+
+// Local-dev escape hatch: when DEV_DISABLE_AUTH=true (and we are NOT in
+// production), JWT verification is bypassed and every request is treated as
+// an authenticated Editor. Useful for poking at the API locally without
+// a Supabase project. The production check is defensive — refuse to honour
+// the flag in deployments.
+const DEV_DISABLE_AUTH =
+  process.env.DEV_DISABLE_AUTH === "true" &&
+  process.env.NODE_ENV !== "production"
+if (DEV_DISABLE_AUTH) {
+  console.warn(
+    "[auth] DEV_DISABLE_AUTH is enabled — JWT verification is BYPASSED. Do not use in production."
+  )
+}
 
 // Supabase configuration
 const SUPABASE_URL = process.env.SUPABASE_URL || ""
@@ -148,6 +163,17 @@ const authenticateJWT = async (
   res: Response,
   next: NextFunction
 ) => {
+  if (DEV_DISABLE_AUTH) {
+    ;(req as any).user = {
+      id: "dev-user",
+      email: "dev@local",
+      metadata: { firstName: "Local", lastName: "Dev" },
+      app_metadata: { role: "Editor" }
+    }
+    next()
+    return
+  }
+
   const authHeader = req.headers.authorization
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -184,7 +210,11 @@ const authenticateJWT = async (
     const user = {
       id: payload.sub,
       email: typeof payload.email === "string" ? payload.email : undefined,
-      metadata: (payload.user_metadata as Record<string, any>) || {}
+      metadata: (payload.user_metadata as Record<string, any>) || {},
+      // app_metadata is the trust boundary for authorization decisions: it is
+      // not editable by the end user. Surface it so middlewares like
+      // `requireEditor` can consult it.
+      app_metadata: (payload.app_metadata as Record<string, any>) || {}
     }
 
     ;(req as any).user = user
@@ -1125,8 +1155,6 @@ const errorHandler: ErrorRequestHandler = (
   res.status(500).send(`${err}`)
 }
 
-app.use(errorHandler)
-
 // Start the server
 export const startServer = async () => {
   try {
@@ -1140,6 +1168,22 @@ export const startServer = async () => {
       new ApiBatchResolver(VOYAGES_API_DATA_URL, VOYAGES_API_AUTH_TOKEN),
       50
     )
+
+    // Bulk-import endpoints (CSV upload + inspect + job polling). Wired here
+    // because the router captures the resolved `dbService` and `resolver`.
+    app.use(
+      createBulkImportRouter({
+        authenticateJWT,
+        getAuthorFromRequest,
+        dbService,
+        resolver,
+        uploadDir
+      })
+    )
+
+    // Error handler must be registered after all routes (including the bulk
+    // router) so it sees their errors too.
+    app.use(errorHandler)
 
     // Start Express server
     app.listen(PORT, () => {
