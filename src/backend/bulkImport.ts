@@ -64,6 +64,19 @@ const CSV_FILE_FILTER: multer.Options["fileFilter"] = (_req, file, cb) => {
     cb(null, true)
     return
   }
+  // Many clients (curl, browser fetch on Windows, miscellaneous tooling)
+  // send `application/octet-stream` whenever they can't identify the MIME.
+  // Accept that fallback only when the filename has a `.csv` extension —
+  // the defense-in-depth recommendation from review feedback. A blanket
+  // octet-stream allow would have turned the endpoint into a generic 100MB
+  // upload sink for any binary.
+  if (
+    file.mimetype === "application/octet-stream" &&
+    path.extname(file.originalname).toLowerCase() === ".csv"
+  ) {
+    cb(null, true)
+    return
+  }
   cb(new Error(`File type ${file.mimetype} not allowed for CSV upload`))
 }
 
