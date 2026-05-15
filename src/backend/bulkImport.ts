@@ -115,23 +115,6 @@ const wrapMulter =
     })
   }
 
-/**
- * Count the unique CSV row numbers that contributed at least one mapping
- * error. Must be called BEFORE `truncateRowNumbers`, since truncation
- * replaces trailing entries with a string sentinel.
- */
-const countUniqueErroredRows = (errors: TrackedMappingErrors[]): number => {
-  const rows = new Set<number>()
-  for (const e of errors) {
-    for (const r of e.rowNumbers) {
-      if (typeof r === "number") {
-        rows.add(r)
-      }
-    }
-  }
-  return rows.size
-}
-
 const truncateRowNumbers = (
   errors: TrackedMappingErrors[],
   maxKept = 6
@@ -317,9 +300,6 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
       errors,
       args.maxRows
     )
-    // Compute the unique-errored-row count BEFORE truncation, since
-    // truncation appends a string sentinel that would confuse Set sizing.
-    const erroredRowCount = countUniqueErroredRows(errors)
     if (errors.length > 0) {
       setErrors(jobId, sortErrors(truncateRowNumbers(errors)))
       if (onError === "abort") {
@@ -331,11 +311,19 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
       }
     }
     // Progress tracks CSV rows: `total` is the number of input rows the
-    // importer looked at (after `maxRows`), and `processed` counts rows that
-    // have been "decided" — either skipped due to mapping errors or pushed
-    // to the DB. Start processed at the errored-row count, then bump per
-    // successful insert.
-    markRunning(jobId, rowCount, erroredRowCount)
+    // importer looked at (after `maxRows`); `processed` counts rows that
+    // have been "decided" — either skipped because the mapping phase
+    // produced no update for them, or pushed to the DB. Start `processed`
+    // at the count of rows the mapper dropped (rowCount - updates.length),
+    // then bump per successful insert. At completion processed == rowCount.
+    //
+    // The previous attempt set the initial value to "unique errored rows",
+    // which double-counted: a row can populate `errors` (lookup miss) AND
+    // still produce an `EntityUpdate` (partial mapping), so the two sets
+    // overlap. `rowCount - updates.length` measures the disjoint
+    // "skipped entirely" set instead.
+    const skippedRowCount = rowCount - updates.length
+    markRunning(jobId, rowCount, skippedRowCount)
     // Resolve or create the publication batch for this import. The caller may
     // override the auto-generated title/comments via the metadata payload; if
     // a batch with the resolved title already exists we reuse it (mirrors the

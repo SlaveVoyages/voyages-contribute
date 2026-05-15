@@ -802,11 +802,13 @@ Content-Type: text/csv
 @jobId = {{uploadJob.response.body.jobId}}
 
 ### Poll the import job's status. Repeat until status is "completed" or
-### "failed". `progress.total` is the number of CSV rows the importer looked
-### at (capped by `maxRows`); `progress.processed` counts rows that have
-### been "decided" — either skipped because of a mapping error or pushed to
-### the DB. `result.pushed` (set on completion) is the number successfully
-### inserted.
+### "failed". `progress.total` is the number of CSV rows the importer
+### looked at (capped by `maxRows`); `progress.processed` counts rows
+### that have been "decided" — either dropped by the mapping phase (no
+### update was produced for them) or pushed to the DB. At completion
+### `processed == total`. `result.pushed` (set on completion) is the
+### number of contributions actually inserted, so
+### `total - result.pushed` is the number of rows the mapper dropped.
 GET {{baseUrl}}/upload-jobs/{{jobId}}
 Authorization: Bearer {{authToken}}
 
