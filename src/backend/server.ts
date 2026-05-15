@@ -240,9 +240,23 @@ app.get("/", (_, res) => {
   res.json({ message: "Contributions API running" })
 })
 
+// Hard upper bound on `limit` so a client requesting e.g. 50000 doesn't
+// translate into a `LIMIT 50000` against MySQL with relations expanded.
+// Callers above the cap are silently clamped; the response echoes the
+// actual `limit` applied so the client can paginate.
+const DEFAULT_LIMIT = 10
+const MAX_LIMIT = 500
+
 const getPaginationArgs = (req: any) => {
-  const page = req.query.page ? parseInt(req.query.page as string) : 1
-  const limit = req.query.limit ? parseInt(req.query.limit as string) : 10
+  const rawPage = req.query.page ? parseInt(req.query.page as string) : 1
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
+  const rawLimit = req.query.limit
+    ? parseInt(req.query.limit as string)
+    : DEFAULT_LIMIT
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(rawLimit, MAX_LIMIT)
+      : DEFAULT_LIMIT
   const sortBy = (req.query.sortBy as "author" | "timestamp" | "id") || "id"
   const sortOrder = (req.query.sortOrder as "ASC" | "DESC") || "ASC"
   return { page, limit, sortBy, sortOrder }
