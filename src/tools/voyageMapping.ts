@@ -63,13 +63,13 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "linked",
-          targetField: "Construction place",
+          targetField: "Place where ship constructed",
           header: "placcons",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Registered place",
+          targetField: "Place where ship registered",
           header: "placreg",
           lookupField: "Code"
         },
@@ -86,7 +86,7 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "linked",
-          targetField: "Ton type",
+          targetField: "Definition of ton",
           header: "tontype",
           lookupField: "Code"
         },
@@ -116,12 +116,12 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "direct",
-          targetField: "Crew at departure from last port of slave purchase",
+          targetField: "Crew at departure from last port of embarkation",
           header: "crew2"
         },
         {
           kind: "direct",
-          targetField: "Crew at first landing of captives",
+          targetField: "Crew at first port of disembarkation",
           header: "crew3"
         },
         {
@@ -139,13 +139,13 @@ export const voyageMapping: DataMapping = {
       importUpdates: [
         {
           kind: "linked",
-          targetField: "Particular outcome",
+          targetField: "Outcome of voyage",
           header: "fate",
           lookupField: "Value"
         },
         {
           kind: "linked",
-          targetField: "Resistance",
+          targetField: "African resistance",
           header: "resistance",
           lookupField: "Value"
         },
@@ -177,90 +177,90 @@ export const voyageMapping: DataMapping = {
       importUpdates: [
         {
           kind: "linked",
-          targetField: "First intended port of embarkation",
+          targetField: "First port of intended embarkation",
           header: "embport",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Second intended port of embarkation",
+          targetField: "Second port of intended embarkation",
           header: "embport2",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "First intended port of disembarkation",
+          targetField: "First port of intended disembarkation",
           header: "arrport",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Second intended port of disembarkation",
+          targetField: "Second port of intended disembarkation",
           header: "arrport2",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Port of departure",
+          targetField: "Port of vessel's departure",
           header: "portdep",
           lookupField: "Code"
         },
         {
           kind: "direct",
-          targetField: "Number of ports of call prior to buying captives",
+          targetField: "Number of ports called prior to purchase",
           header: "nppretra"
         },
         {
           kind: "linked",
-          targetField: "First place of slave purchase",
+          targetField: "First port of embarkation",
           header: "plac1tra",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Second place of slave purchase",
+          targetField: "Second port of embarkation",
           header: "plac2tra",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Third place of slave purchase",
+          targetField: "Third port of embarkation",
           header: "plac3tra",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Principal place of slave purchase",
+          targetField: "Principal port of embarkation",
           header: "majbuypt",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "First place of slave landing",
+          targetField: "First port of disembarkation",
           header: "sla1port",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Second place of slave landing",
+          targetField: "Second port of disembarkation",
           header: "adpsale1",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Third place of slave landing",
+          targetField: "Third port of disembarkation",
           header: "adpsale2",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Principal port of slave disembarkation",
+          targetField: "Principal port of disembarkation",
           header: "majselpt",
           lookupField: "Code"
         },
         {
           kind: "linked",
-          targetField: "Place at which voyage ended",
+          targetField: "Port at which voyage ended",
           header: "portret",
           lookupField: "Code"
         },
@@ -361,15 +361,15 @@ export const voyageMapping: DataMapping = {
           bindings: [
             {
               $dateHeader: "datedep",
-              $targetField: "Date that voyage began"
+              $targetField: "Date of vessel's departure"
             },
             {
               $dateHeader: "dateend",
-              $targetField: "Date on which slave voyage completed"
+              $targetField: "Date when voyage completed"
             },
             {
               $dateHeader: "datebuy",
-              $targetField: "Date that slave purchase began"
+              $targetField: "Date that embarkation began"
             },
             {
               $dateHeader: "dateleftafr",
@@ -377,15 +377,15 @@ export const voyageMapping: DataMapping = {
             },
             {
               $dateHeader: "dateland1",
-              $targetField: "Date of first disembarkation of captives"
+              $targetField: "Date of first disembarkation"
             },
             {
               $dateHeader: "dateland2",
-              $targetField: "Date of second disembarkation of captives"
+              $targetField: "Date of second disembarkation"
             },
             {
               $dateHeader: "dateland3",
-              $targetField: "Date of third disembarkation of captives"
+              $targetField: "Date of third disembarkation"
             },
             {
               $dateHeader: "datedepam",
@@ -453,53 +453,53 @@ export const voyageMapping: DataMapping = {
       importUpdates: [
         {
           kind: "direct",
-          targetField: "Captive deaths before leaving Africa",
+          targetField: "Deaths before leaving broad region of embarkation",
           header: "sladafri"
         },
         {
           kind: "direct",
-          targetField: "Captive deaths between Africa and Americas",
+          targetField: "Deaths in the transoceanic voyage",
           header: "sladvoy"
         },
         {
           kind: "direct",
-          targetField: "Captive deaths between arrival and sale",
+          targetField: "Deaths between arrival and sale",
           header: "sladamer"
         },
         {
           kind: "direct",
-          targetField: "Captives intended from first port of purchase",
+          targetField: "Captives intended from first port of embarkation",
           header: "slintend"
         },
         {
           kind: "direct",
-          targetField: "Captives intended from second port of purchase",
+          targetField: "Captives intended from second port of embarkation",
           header: "slinten2"
         },
         {
           kind: "direct",
-          targetField: "Number of captives carried from first port of purchase",
+          targetField: "Captives carried from first port of embarkation",
           header: "ncar13"
         },
         {
           kind: "direct",
           targetField:
-            "Number of captives carried from second port of purchase",
+            "Captives carried from second port of embarkation",
           header: "ncar15"
         },
         {
           kind: "direct",
-          targetField: "Number of captives carried from third port of purchase",
+          targetField: "Captives carried from third port of embarkation",
           header: "ncar17"
         },
         {
           kind: "direct",
-          targetField: "Total captives purchased",
+          targetField: "Total captives embarked",
           header: "tslavesp"
         },
         {
           kind: "direct",
-          targetField: "Total captives on board at departure from last port",
+          targetField: "Total captives on board at departure from last slaving port",
           header: "tslavesd"
         },
         {
@@ -509,17 +509,17 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "direct",
-          targetField: "Number of captives disembarked at first place",
+          targetField: "Captives landed at first port of disembarkation",
           header: "slas32"
         },
         {
           kind: "direct",
-          targetField: "Number of captives disembarked at second place",
+          targetField: "Captives landed at second port of disembarkation",
           header: "slas36"
         },
         {
           kind: "direct",
-          targetField: "Number of captives disembarked at third place",
+          targetField: "Captives landed at third port of disembarkation",
           header: "slas39"
         },
         {

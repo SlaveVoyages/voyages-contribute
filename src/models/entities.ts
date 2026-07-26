@@ -172,23 +172,35 @@ export const VoyageShipEntitySchema = mkBuilder({
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
+    label: "Place where ship constructed",
+    backingField: "vessel_construction_place_id",
+    linkedEntitySchema: Location,
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addLinkedEntity({
+    label: "Place where ship registered",
+    backingField: "registered_place_id",
+    linkedEntitySchema: Location,
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addNumber({
+    label: "Year of ship construction",
+    backingField: "year_of_construction",
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addNumber({
+    label: "Year of ship registration",
+    backingField: "registered_year",
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addLinkedEntity({
     label: "National carrier",
     backingField: "nationality_ship_id",
     linkedEntitySchema: NationalitySchema,
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.BeginnerContributor
-  })
-  .addLinkedEntity({
-    label: "Ton type",
-    backingField: "ton_type_id",
-    linkedEntitySchema: TonTypeSchema,
-    mode: EntityLinkEditMode.Select,
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addNumber({
-    label: "Tonnage of vessel",
-    backingField: "tonnage",
-    accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     label: "Rig of vessel",
@@ -198,43 +210,33 @@ export const VoyageShipEntitySchema = mkBuilder({
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
+    label: "Tonnage of vessel",
+    backingField: "tonnage",
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addLinkedEntity({
+    label: "Definition of ton",
+    backingField: "ton_type_id",
+    linkedEntitySchema: TonTypeSchema,
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addNumber({
     label: "Guns mounted",
     backingField: "guns_mounted",
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addNumber({
-    label: "Year of vessel's construction",
-    backingField: "year_of_construction",
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addLinkedEntity({
-    label: "Construction place",
-    backingField: "vessel_construction_place_id",
-    linkedEntitySchema: Location,
-    mode: EntityLinkEditMode.Select,
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addNumber({
-    label: "Year of vessel's registration",
-    backingField: "registered_year",
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addLinkedEntity({
-    label: "Registered place",
-    backingField: "registered_place_id",
-    linkedEntitySchema: Location,
-    mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     label: "Nationality",
     backingField: "imputed_nationality_id",
     linkedEntitySchema: NationalitySchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Tonnage standardized on British measured tons, 1773-1870",
-    backingField: "tonnage_mod"
+    backingField: "tonnage_mod",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .build()
 
@@ -244,121 +246,136 @@ export const VoyageItinerarySchema = mkBuilder({
   pkField: "id",
   contributionMode: "Owned",
   getLabel: (data) =>
-    `Itinerary from ${data["First intended port of embarkation"]?.data.Name ?? "unknown"} to ` +
-    (data["First intended port of disembarkation"]?.data.Name ?? "unknown")
+    `Itinerary from ${data["First port of intended embarkation"]?.data.Name ?? "unknown"} to ` +
+    (data["First port of intended disembarkation"]?.data.Name ?? "unknown")
 })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Port of departure",
-    backingField: "port_of_departure_id",
-    mode: EntityLinkEditMode.Select,
-    accessLevel: PropertyAccessLevel.BeginnerContributor
-  })
-  .addLinkedEntity({
-    linkedEntitySchema: Location,
-    label: "First intended port of embarkation",
-    description: "First intended port of embarkation",
+    label: "First port of intended embarkation",
+    description: "First port of intended embarkation",
     backingField: "int_first_port_emb_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Second intended port of embarkation",
-    description: "Second intended port of embarkation",
+    label: "Second port of intended embarkation",
+    description: "Second port of intended embarkation",
     backingField: "int_second_port_emb_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "First intended port of disembarkation",
+    label: "First port of intended disembarkation",
     backingField: "int_first_port_dis_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Second intended port of disembarkation",
+    label: "Second port of intended disembarkation",
     backingField: "int_second_port_dis_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Third intended port of disembarkation",
+    label: "Third port of intended disembarkation",
     backingField: "int_third_port_dis_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Fourth intended port of disembarkation",
+    label: "Fourth port of intended disembarkation",
     backingField: "int_fourth_port_dis_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
+  .addLinkedEntity({
+    linkedEntitySchema: Location,
+    label: "Port of vessel's departure",
+    backingField: "port_of_departure_id",
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.BeginnerContributor
+  })
   .addNumber({
-    label: "Number of ports of call prior to buying captives",
+    label: "Number of ports called prior to purchase",
     backingField: "ports_called_buying_slaves",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "First place of slave purchase",
+    label: "First port of embarkation",
     backingField: "first_place_slave_purchase_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Second place of slave purchase",
+    label: "Second port of embarkation",
     backingField: "second_place_slave_purchase_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Third place of slave purchase",
+    label: "Third port of embarkation",
     backingField: "third_place_slave_purchase_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Port of call before Atlantic crossing",
+    label: "Principal port of embarkation",
+    backingField: "principal_place_of_slave_purchase_id",
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.BeginnerContributor
+  })
+  .addLinkedEntity({
+    linkedEntitySchema: Location,
+    label: "Places of call before crossing",
     backingField: "port_of_call_before_atl_crossing_id",
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of ports of call in Americas prior to sale of captives",
+    label: "Number of ports of call before disembarkation",
     backingField: "number_of_ports_of_call",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "First place of slave landing",
+    label: "First port of disembarkation",
     backingField: "first_landing_place_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Second place of slave landing",
+    label: "Second port of disembarkation",
     backingField: "second_landing_place_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Third place of slave landing",
+    label: "Third port of disembarkation",
     backingField: "third_landing_place_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
-    label: "Place at which voyage ended",
+    label: "Principal port of disembarkation",
+    backingField: "principal_port_of_slave_dis_id",
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.BeginnerContributor
+  })
+  .addLinkedEntity({
+    linkedEntitySchema: Location,
+    label: "Port at which voyage ended",
     backingField: "place_voyage_ended_id",
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.BeginnerContributor
@@ -367,33 +384,22 @@ export const VoyageItinerarySchema = mkBuilder({
     linkedEntitySchema: Location,
     label: "Imputed port where voyage began",
     backingField: "imp_port_voyage_begin_id",
-    mode: EntityLinkEditMode.Select
-  })
-  .addLinkedEntity({
-    linkedEntitySchema: Location,
-    label: "Principal place of slave purchase",
-    backingField: "principal_place_of_slave_purchase_id",
     mode: EntityLinkEditMode.Select,
-    accessLevel: PropertyAccessLevel.BeginnerContributor
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
     label: "Imputed principal place of slave purchase",
     backingField: "imp_principal_place_of_slave_purchase_id",
-    mode: EntityLinkEditMode.Select
-  })
-  .addLinkedEntity({
-    linkedEntitySchema: Location,
-    label: "Principal port of slave disembarkation",
-    backingField: "principal_port_of_slave_dis_id",
     mode: EntityLinkEditMode.Select,
-    accessLevel: PropertyAccessLevel.BeginnerContributor
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     linkedEntitySchema: Location,
     label: "Imputed principal port of slave disembarkation",
     backingField: "imp_principal_port_slave_dis_id",
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .build()
 
@@ -460,61 +466,43 @@ export const VoyageSlaveNumbersSchema = mkBuilder({
   getLabel: (_) => "Slave numbers"
 })
   .addNumber({
-    label: "Captive deaths before leaving Africa",
-    backingField: "slave_deaths_before_africa",
-    section: "Numbers",
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addNumber({
-    label: "Captive deaths between Africa and Americas",
-    backingField: "slave_deaths_between_africa_america",
-    section: "Numbers",
-    accessLevel: PropertyAccessLevel.BeginnerContributor
-  })
-  .addNumber({
-    label: "Captive deaths between arrival and sale",
-    backingField: "slave_deaths_between_arrival_and_sale",
-    section: "Numbers",
-    accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addNumber({
-    label: "Captives intended from first port of purchase",
+    label: "Captives intended from first port of embarkation",
     backingField: "num_slaves_intended_first_port",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Captives intended from second port of purchase",
+    label: "Captives intended from second port of embarkation",
     backingField: "num_slaves_intended_second_port",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of captives carried from first port of purchase",
+    label: "Captives carried from first port of embarkation",
     backingField: "num_slaves_carried_first_port",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of captives carried from second port of purchase",
+    label: "Captives carried from second port of embarkation",
     backingField: "num_slaves_carried_second_port",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of captives carried from third port of purchase",
+    label: "Captives carried from third port of embarkation",
     backingField: "num_slaves_carried_third_port",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Total captives purchased",
+    label: "Total captives embarked",
     backingField: "total_num_slaves_purchased",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
-    label: "Total captives on board at departure from last port",
+    label: "Total captives on board at departure from last slaving port",
     backingField: "total_num_slaves_dep_last_slaving_port",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.BeginnerContributor
@@ -526,202 +514,252 @@ export const VoyageSlaveNumbersSchema = mkBuilder({
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
-    label: "Number of captives disembarked at first place",
+    label: "Captives landed at first port of disembarkation",
     backingField: "num_slaves_disembark_first_place",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of captives disembarked at second place",
+    label: "Captives landed at second port of disembarkation",
     backingField: "num_slaves_disembark_second_place",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of captives disembarked at third place",
+    label: "Captives landed at third port of disembarkation",
     backingField: "num_slaves_disembark_third_place",
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addNumber({
+    label: "Deaths before leaving broad region of embarkation",
+    backingField: "slave_deaths_before_africa",
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addNumber({
+    label: "Deaths in the transoceanic voyage",
+    backingField: "slave_deaths_between_africa_america",
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.BeginnerContributor
+  })
+  .addNumber({
+    label: "Deaths between arrival and sale",
+    backingField: "slave_deaths_between_arrival_and_sale",
     section: "Numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Total captives embarked (imputed)",
     backingField: "imp_total_num_slaves_embarked",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives disembarked (imputed)",
     backingField: "imp_total_num_slaves_disembarked",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Sterling cash price in Jamaica (imputed)",
     backingField: "imp_jamaican_cash_price",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Imputed number of captive deaths during Middle Passage",
     backingField: "imp_mortality_during_voyage",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives embarked with age identified",
     backingField: "total_slaves_embarked_age_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives embarked with gender identified",
     backingField: "total_slaves_embarked_gender_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives landed with age identified",
     backingField: "total_slaves_landed_age_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives landed with gender identified",
     backingField: "total_slaves_landed_gender_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives identified by age at departure or arrival",
     backingField: "total_slaves_dept_or_arr_age_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives identified by gender at departure or arrival",
     backingField: "total_slaves_dept_or_arr_gender_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Imputed number of captives embarked for mortality calculation",
     backingField: "imp_slaves_embarked_for_mortality",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives embarked with age and gender identified",
     backingField: "total_slaves_embarked_age_gender_identified",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives identified by age and gender among landed",
     backingField: "total_slaves_by_age_gender_identified_among_landed",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label:
       "Total captives identified by age and gender at departure or arrival",
     backingField: "total_slaves_by_age_gender_identified_departure_or_arrival",
-    section: "Numbers"
+    section: "Numbers",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of boys among embarked captives",
     backingField: "percentage_boys_among_embarked_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Child ratio among embarked captives",
     backingField: "child_ratio_among_embarked_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of girls among embarked captives",
     backingField: "percentage_girls_among_embarked_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Male ratio among embarked captives",
     backingField: "male_ratio_among_embarked_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of men among embarked captives",
     backingField: "percentage_men_among_embarked_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of women among embarked captives",
     backingField: "percentage_women_among_embarked_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of boys among landed captives",
     backingField: "percentage_boys_among_landed_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Child ratio among landed captives",
     backingField: "child_ratio_among_landed_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of girls among landed captives",
     backingField: "percentage_girls_among_landed_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Male ratio among landed captives",
     backingField: "male_ratio_among_landed_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of men among landed captives",
     backingField: "percentage_men_among_landed_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage of women among landed captives",
     backingField: "percentage_women_among_landed_slaves",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage men on voyage",
     backingField: "percentage_men",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage women on voyage",
     backingField: "percentage_women",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage boy on voyage",
     backingField: "percentage_boy",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage girl on voyage",
     backingField: "percentage_girl",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage male on voyage",
     backingField: "percentage_male",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage children on voyage",
     backingField: "percentage_child",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage adult on voyage",
     backingField: "percentage_adult",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Percentage female on voyage",
     backingField: "percentage_female",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Imputed mortality ratio",
     backingField: "imp_mortality_ratio",
-    section: "Ratios"
+    section: "Ratios",
+    accessLevel: PropertyAccessLevel.Editor
   })
-
-  // Table for characteristics
-
   .addTable({
     uid: "sn_characteristics",
     label: "Slave characteristics",
@@ -729,19 +767,16 @@ export const VoyageSlaveNumbersSchema = mkBuilder({
     accessLevel: PropertyAccessLevel.BeginnerContributor,
     columns: slaveNumberColumns,
     rows: [
-      "Embarked captives (first port)",
-      "Embarked captives (second port)",
-      "Embarked captives (third port)",
+      "Embarked (first port)",
+      "Embarked (second port)",
+      "Embarked (third port)",
       "Died on voyage",
-      "Disembarked captives (first port)",
-      "Disembarked captives (second port)"
+      "Disembarked (first port)",
+      "Disembarked (second port)"
     ],
     cellField: (col, row) =>
       `${slaveNumberPrefixes[col]}_${slaveNumberSuffixes[row]}`
   })
-
-  // Table for imputed characteristics
-
   .addTable({
     uid: "sn_characteristics_imputed",
     label: "Slave characteristics (imputed)",
@@ -783,29 +818,15 @@ export const VoyageDatesSchema = mkBuilder({
   pkField: "id",
   getLabel: (_) => "Voyage dates"
 })
-  .addNumber({
-    label: "Length of middle passage in (days)",
-    backingField: "length_middle_passage_days"
-  })
-  .addNumber({
-    label: "Voyage length from home port to disembarkation (days)",
-    backingField: "imp_length_home_to_disembark"
-  })
-  .addNumber({
-    label:
-      "Voyage length from last slave embarkation to first disembarkation (days)",
-    backingField: "imp_length_leaving_africa_to_disembark",
-    accessLevel: PropertyAccessLevel.BeginnerContributor
-  })
   .addLinkedEntity({
-    label: "Date that voyage began",
+    label: "Date of vessel's departure",
     backingField: "voyage_began_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own,
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
-    label: "Date that slave purchase began",
+    label: "Date that embarkation began",
     backingField: "slave_purchase_began_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own,
@@ -819,63 +840,83 @@ export const VoyageDatesSchema = mkBuilder({
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
-    label: "Date vessel departed Africa",
-    backingField: "date_departed_africa_sparsedate_id",
-    linkedEntitySchema: SparseDateSchema,
-    mode: EntityLinkEditMode.Own,
-    accessLevel: PropertyAccessLevel.BeginnerContributor
-  })
-  .addLinkedEntity({
-    label: "Date of first disembarkation of captives",
+    label: "Date of first disembarkation",
     backingField: "first_dis_of_slaves_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own,
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
-    label: "Date of second disembarkation of captives",
+    label: "Date of second disembarkation",
     backingField: "arrival_at_second_place_landing_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
-    label: "Date of third disembarkation of captives",
+    label: "Date of third disembarkation",
     backingField: "third_dis_of_slaves_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own,
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addLinkedEntity({
-    label: "Date of departure from last place of landing",
+    label: "Date that ship left on return voyage",
     backingField: "departure_last_place_of_landing_sparsedate_id",
-    linkedEntitySchema: SparseDateSchema,
-    mode: EntityLinkEditMode.Own
-  })
-  .addLinkedEntity({
-    label: "Date on which slave voyage completed",
-    backingField: "voyage_completed_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own,
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
+    label: "Date when voyage completed",
+    backingField: "voyage_completed_sparsedate_id",
+    linkedEntitySchema: SparseDateSchema,
+    mode: EntityLinkEditMode.Own,
+    accessLevel: PropertyAccessLevel.BeginnerContributor
+  })
+  .addNumber({
+    label: "Length of transoceanic voyage in days",
+    backingField: "length_middle_passage_days",
+    accessLevel: PropertyAccessLevel.BeginnerContributor
+  })
+  .addNumber({
+    label: "Voyage length from home port to disembarkation (days)",
+    backingField: "imp_length_home_to_disembark",
+    accessLevel: PropertyAccessLevel.Editor
+  })
+  .addNumber({
+    label:
+      "Voyage length from last slave embarkation to first disembarkation (days)",
+    backingField: "imp_length_leaving_africa_to_disembark",
+    accessLevel: PropertyAccessLevel.Editor
+  })
+  .addLinkedEntity({
+    label: "Date vessel departed Africa",
+    backingField: "date_departed_africa_sparsedate_id",
+    linkedEntitySchema: SparseDateSchema,
+    mode: EntityLinkEditMode.Own,
+    accessLevel: PropertyAccessLevel.Editor
+  })
+  .addLinkedEntity({
     label: "Year voyage began",
     backingField: "imp_voyage_began_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
-    mode: EntityLinkEditMode.Own
+    mode: EntityLinkEditMode.Own,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     label: "Year of arrival at port of disembarkation",
     backingField: "imp_arrival_at_port_of_dis_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
-    mode: EntityLinkEditMode.Own
+    mode: EntityLinkEditMode.Own,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     label: "Year departed Africa",
     backingField: "imp_departed_africa_sparsedate_id",
     linkedEntitySchema: SparseDateSchema,
-    mode: EntityLinkEditMode.Own
+    mode: EntityLinkEditMode.Own,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .build()
 
@@ -913,6 +954,31 @@ export const AfricanInfoSchema = mkBuilder({
     label: "Possibly offensive",
     backingField: "possibly_offensive",
     defaultValue: false
+  })
+  .build()
+
+/**
+ * The Voyage <-> AfricanInfo relationship is many-to-many in production
+ * (voyages-frontend-new-repo's CONST_DATA.ts filters on `african_info__name`
+ * as a MultiselectList), modeled here the same way Cargo is: a connection
+ * entity owned by the voyage. `backingTable`/`africaninfo_id` follow Django's
+ * default M2M through-table naming convention but are NOT confirmed against
+ * the production schema - verify before relying on this in prod.
+ */
+export const VoyageAfricanInfoConnectionSchema = mkBuilder({
+  name: "VoyageAfricanInfoConnectionSchema",
+  backingTable: "voyage_voyage_african_info",
+  contributionMode: "Owned",
+  pkField: "id",
+  getLabel: (d) =>
+    `African info for voyage ${d.voyage_id}: ${coalesce(d["African info"]?.data.Name)}`
+})
+  .addOwnerProp("voyage_id")
+  .addLinkedEntity({
+    backingField: "africaninfo_id",
+    label: "African info",
+    linkedEntitySchema: AfricanInfoSchema,
+    mode: EntityLinkEditMode.Select
   })
   .build()
 
@@ -975,7 +1041,7 @@ export const ParticularOutcomeSchema = mkBuilder({
   backingTable: "voyage_particularoutcome",
   contributionMode: "ReadOnly",
   pkField: "id",
-  getLabel: (d, short) => (short ? d.Name : `Particular outcome ${d.Name}`)
+    getLabel: (d, short) => (short ? d.Name : `Outcome of voyage ${d.Name}`)
 })
   .addText({ label: "Name", backingField: "name" })
   .addNumber({ label: "Value", backingField: "value" })
@@ -1034,14 +1100,14 @@ export const VoyageOutcomeSchema = mkBuilder({
 })
   .addLinkedEntity({
     backingField: "particular_outcome_id",
-    label: "Particular outcome",
+    label: "Outcome of voyage",
     linkedEntitySchema: ParticularOutcomeSchema,
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addLinkedEntity({
     backingField: "resistance_id",
-    label: "Resistance",
+    label: "African resistance",
     linkedEntitySchema: ResistanceSchema,
     mode: EntityLinkEditMode.Select,
     accessLevel: PropertyAccessLevel.BeginnerContributor
@@ -1050,19 +1116,22 @@ export const VoyageOutcomeSchema = mkBuilder({
     backingField: "outcome_slaves_id",
     label: "Enslaved outcome",
     linkedEntitySchema: EnslavedOutcomeSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     backingField: "vessel_captured_outcome_id",
     label: "Vessel outcome",
     linkedEntitySchema: VesselOutcomeSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     backingField: "outcome_owner_id",
     label: "Owner outcome",
     linkedEntitySchema: OwnerOutcomeSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .build()
 
@@ -1079,17 +1148,17 @@ export const VoyageCrewSchema = mkBuilder({
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
-    label: "Crew at departure from last port of slave purchase",
+    label: "Crew at departure from last port of embarkation",
     backingField: "crew_departure_last_port",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
-    label: "Crew at first landing of captives",
+    label: "Crew at first port of disembarkation",
     backingField: "crew_first_landing",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
-    label: "Crew when return voyage begin",
+    label: "Crew when return voyage began",
     backingField: "crew_return_begin",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
@@ -1099,7 +1168,7 @@ export const VoyageCrewSchema = mkBuilder({
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Number of crew unspecified",
+    label: "Number of crew if voyage stage unknown",
     backingField: "unspecified_crew",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
@@ -1114,7 +1183,7 @@ export const VoyageCrewSchema = mkBuilder({
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
-    label: "Crew died during Middle Passage",
+    label: "Crew died during transoceanic passage",
     backingField: "crew_died_middle_passage",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
@@ -1179,77 +1248,94 @@ export const EnslaverSchema = mkBuilder({
   })
   .addNumber({
     backingField: "birth_year",
-    label: "Birth year"
+    label: "Birth year",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     backingField: "birth_month",
-    label: "Birth month"
+    label: "Birth month",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     backingField: "birth_day",
-    label: "Birth day"
+    label: "Birth day",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     label: "Birth place",
     backingField: "birth_place_id",
     linkedEntitySchema: Location,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     backingField: "death_year",
-    label: "Death year"
+    label: "Death year",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     backingField: "death_month",
-    label: "Death month"
+    label: "Death month",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     backingField: "death_day",
-    label: "Death day"
+    label: "Death day",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     label: "Death place",
     backingField: "death_place_id",
     linkedEntitySchema: Location,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "father_name",
-    label: "Father name"
+    label: "Father name",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "father_occupation",
-    label: "Father occupation"
+    label: "Father occupation",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "mother_name",
-    label: "Mother name"
+    label: "Mother name",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "probate_date",
-    label: "Probate date"
+    label: "Probate date",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "will_value_pounds",
-    label: "Will value (pounds)"
+    label: "Will value (pounds)",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "will_value_dollars",
-    label: "Will value (dollars)"
+    label: "Will value (dollars)",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "will_court",
-    label: "Will court"
+    label: "Will court",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addLinkedEntity({
     label: "Principal location",
     backingField: "principal_location_id",
     linkedEntitySchema: Location,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addText({
     backingField: "notes",
-    label: "Notes"
+    label: "Notes",
+    accessLevel: PropertyAccessLevel.Editor
   })
   .build()
 
@@ -1562,7 +1648,8 @@ export const VoyageSchema = mkBuilder({
     backingField: "voyage_groupings",
     linkedEntitySchema: VoyageGroupingSchema,
     mode: EntityLinkEditMode.Select,
-    notNull: false
+    notNull: false,
+    accessLevel: PropertyAccessLevel.Editor
   })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
@@ -1572,19 +1659,27 @@ export const VoyageSchema = mkBuilder({
     section: SectionShipNations,
     notNull: true
   })
+  .addOwnedEntityList({
+    label: "Cargo",
+    linkedEntitySchema: VoyageCargoConnectionSchema,
+    editModes: ListEditMode.All,
+    childBackingProp: "voyage_id",
+    section: SectionShipNations,
+    accessLevel: PropertyAccessLevel.AdvancedContributor
+  })
+  .addOwnedEntityList({
+    label: "Enslavement relations",
+    linkedEntitySchema: EnslavementRelationSchema,
+    editModes: ListEditMode.All,
+    childBackingProp: "voyage_id",
+    section: "Enslavement Relations"
+  })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
     linkedEntitySchema: VoyageOutcomeSchema,
     label: "Outcome",
     description: "Outcome of the voyage",
     section: "Voyage Outcome"
-  })
-  .addEntityOwned({
-    oneToOneBackingField: "voyage_id",
-    linkedEntitySchema: VoyageCrewSchema,
-    label: "Crew",
-    description: "Crew of the voyage",
-    section: "Crew"
   })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
@@ -1602,25 +1697,25 @@ export const VoyageSchema = mkBuilder({
   })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
+    linkedEntitySchema: VoyageCrewSchema,
+    label: "Crew",
+    description: "Crew of the voyage",
+    section: "Crew"
+  })
+  .addEntityOwned({
+    oneToOneBackingField: "voyage_id",
     linkedEntitySchema: VoyageSlaveNumbersSchema,
     label: "Slave numbers",
     section: "Slave numbers",
     notNull: true
   })
   .addOwnedEntityList({
-    label: "Cargo",
-    linkedEntitySchema: VoyageCargoConnectionSchema,
+    label: "African info",
+    linkedEntitySchema: VoyageAfricanInfoConnectionSchema,
     editModes: ListEditMode.All,
     childBackingProp: "voyage_id",
-    section: SectionShipNations,
+    section: "Slave numbers",
     accessLevel: PropertyAccessLevel.AdvancedContributor
-  })
-  .addOwnedEntityList({
-    label: "Enslavement relations",
-    linkedEntitySchema: EnslavementRelationSchema,
-    editModes: ListEditMode.All,
-    childBackingProp: "voyage_id",
-    section: "Enslavement Relations"
   })
   .addOwnedEntityList({
     label: "Sources",
