@@ -8,7 +8,8 @@ import {
   isMaterializedEntity,
   isMaterializedEntityArray,
   MaterializedEntity,
-  materializeNew
+  materializeNew,
+  EntityData
 } from "../src/models/materialization"
 import {
   VoyageShipEntitySchema,
@@ -18,6 +19,8 @@ import {
   VoyageDatesSchema,
   SparseDateSchema,
   VoyageCargoConnectionSchema,
+  EntitySchema,
+  getSchema,
   CargoUnitSchema,
   CargoTypeSchema,
   AllProperties
@@ -299,7 +302,7 @@ const voyage1234: MaterializedEntity = {
       data: {
         "Crew at voyage outset": null,
         "Crew at departure from last port of embarkation": null,
-        "Crew at first landing of slaves": null,
+        "Crew at first port of disembarkation": null,
         "Crew when return voyage began": null,
         "Crew at end of voyage": null,
         "Number of crew if voyage stage unknown": null,
@@ -321,7 +324,7 @@ const voyage1234: MaterializedEntity = {
     },
     "Slave numbers": {
       data: {
-        SlavesIntendedFirstPortPurchase: null,
+        "Captives intended from first port of embarkation": null,
         num_men_embark_first_port_purchase: null,
         num_women_embark_first_port_purchase: null,
         num_boy_embark_first_port_purchase: null,
@@ -480,7 +483,7 @@ const voyage1234: MaterializedEntity = {
           }
         },
         "African resistance": null,
-        "Enslaved Outcome": {
+        "Enslaved outcome": {
           data: {
             Name: "Slaves disembarked in Americas",
             Value: 1,
@@ -493,7 +496,7 @@ const voyage1234: MaterializedEntity = {
             id: 1
           }
         },
-        "Vessel Outcome": {
+        "Vessel outcome": {
           data: {
             Name: "Not captured",
             Value: 14,
@@ -506,7 +509,7 @@ const voyage1234: MaterializedEntity = {
             id: 1
           }
         },
-        "Owner Outcome": {
+        "Owner outcome": {
           data: {
             Name: "Delivered slaves for original owners",
             Value: 1,
@@ -549,12 +552,12 @@ const voyage1234: MaterializedEntity = {
         "Second port of intended disembarkation": null,
         "Third port of intended disembarkation": null,
         "Fourth port of intended disembarkation": null,
-        "Number of ports of call prior to buying slaves": null,
+        "Number of ports called prior to purchase": null,
         "First port of embarkation": null,
         "Second port of embarkation": null,
         "Third port of embarkation": null,
         "Places of call before crossing": null,
-        "Number of ports of call in Americas prior to sale of slaves": null,
+        "Number of ports of call before disembarkation": null,
         "First port of disembarkation": {
           data: {
             Name: "Cuba, port unspecified",
@@ -635,7 +638,7 @@ const voyage1234: MaterializedEntity = {
     },
     Dates: {
       data: {
-        "Length of Middle Passage in (days)": null,
+        "Length of transoceanic voyage in days": null,
         "Voyage length from home port to disembarkation (days)": 184,
         "Voyage length from last slave embarkation to first disembarkation (days)":
           null,
@@ -655,7 +658,7 @@ const voyage1234: MaterializedEntity = {
         },
         "Date that embarkation began": null,
         "Date that vessel left last slaving port": null,
-        "Date of first disembarkation of slaves": {
+        "Date of first disembarkation": {
           data: {
             Year: 1831,
             Month: 11,
@@ -670,11 +673,11 @@ const voyage1234: MaterializedEntity = {
           }
         },
         "Date vessel departed Africa": null,
-        "Date of arrival at second place of landing": null,
-        "Date of third disembarkation of slaves": null,
+        "Date of second disembarkation": null,
+        "Date of third disembarkation": null,
         "Date that ship left on return voyage": null,
         "Date when voyage completed": null,
-        "Voyage began": {
+        "Year voyage began": {
           data: {
             Year: 1831,
             Month: null,
@@ -688,7 +691,7 @@ const voyage1234: MaterializedEntity = {
             id: 6184
           }
         },
-        "Departed Africa": {
+        "Year departed Africa": {
           data: {
             Year: 1831,
             Month: null,
@@ -1270,4 +1273,42 @@ test("sparse date changes", () => {
   const changedDate = dates.data[field] as MaterializedEntity
   expect(changedDate.data["Year"]).toBe(1831)
   expect(changedDate.data["Month"]).toBe(9)
+})
+
+/**
+ * `voyage1234` is keyed by property *labels*, the same way a materialized
+ * entity coming off the API is. Nothing reads the keys this test doesn't
+ * touch, so a label rename leaves stale keys sitting in the fixture and the
+ * suite stays green while drifting away from the schema. Resolve them all.
+ */
+test("every key in the voyage fixture resolves to a schema property", () => {
+  const stale: string[] = []
+  // Table cells are keyed by the backing field `cellField` generates, not by a
+  // label, so collect those as valid keys alongside the labels.
+  const cellFields = (schema: EntitySchema) => {
+    const fields = new Set<string>()
+    for (const p of schema.properties) {
+      if (p.kind !== "table") continue
+      p.columns.forEach((_c, ci) => p.rows.forEach((_r, ri) => fields.add(p.cellField(ci, ri))))
+    }
+    return fields
+  }
+  const visit = (schema: EntitySchema, data: EntityData, path: string) => {
+    const cells = cellFields(schema)
+    for (const [key, value] of Object.entries(data ?? {})) {
+      if (key === "id" || cells.has(key)) continue
+      const prop = getSchemaProp(schema, key)
+      if (prop === undefined) {
+        stale.push(`${path}.${key}`)
+        continue
+      }
+      const linked = (prop as { linkedEntitySchema?: string }).linkedEntitySchema
+      if (linked === undefined) continue
+      if (isMaterializedEntity(value)) visit(getSchema(linked), value.data, `${path}.${key}`)
+      else if (isMaterializedEntityArray(value))
+        value.forEach((item, i) => visit(getSchema(linked), item.data, `${path}.${key}[${i}]`))
+    }
+  }
+  visit(getSchema(voyage1234.entityRef.schema), voyage1234.data, "voyage1234")
+  expect(stale).toEqual([])
 })
