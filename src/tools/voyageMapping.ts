@@ -1472,9 +1472,9 @@ export const voyageMapping: DataMapping = {
       kind: "ignored",
       headers: ["voyageid2"],
       reason:
-        "Not yet modelled: this is a delimited list of voyage ids that pairs " +
-        "this voyage with others (Django keeps them in LinkedVoyages, with " +
-        "mode=INTRA_AMERICAN_LINK_MODE for an Intra-American/Trans-Atlantic " +
+        "Not yet modelled, see issue #6: this is a delimited list of voyage ids " +
+        "that pairs this voyage with others (Django keeps them in LinkedVoyages, " +
+        "with mode=INTRA_AMERICAN_LINK_MODE for an Intra-American/Trans-Atlantic " +
         "pair). Mapping it needs a LinkedVoyages schema in entities.ts."
     },
     {
