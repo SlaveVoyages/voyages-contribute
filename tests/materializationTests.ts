@@ -96,7 +96,7 @@ test("materialize new voyage with edits", () => {
   assert(voyageYearProp !== undefined, "Voyage year prop not found in schema")
   const voyageDaysProp = getSchemaProp(
     VoyageDatesSchema,
-    "Length of middle passage in (days)"
+    "Length of transoceanic voyage in days"
   )
   assert(voyageDaysProp !== undefined, "Voyage days prop not found in schema")
   const sparseYearProp = getSchemaProp(SparseDateSchema, "Year")
@@ -298,14 +298,14 @@ const voyage1234: MaterializedEntity = {
     Crew: {
       data: {
         "Crew at voyage outset": null,
-        "Crew at departure from last port of slave purchase": null,
+        "Crew at departure from last port of embarkation": null,
         "Crew at first landing of slaves": null,
-        "Crew when return voyage begin": null,
+        "Crew when return voyage began": null,
         "Crew at end of voyage": null,
-        "Number of crew unspecified": null,
+        "Number of crew if voyage stage unknown": null,
         "Crew died before first place of trade in Africa": null,
         "Crew died while ship was on African coast": null,
-        "Crew died during Middle Passage": null,
+        "Crew died during transoceanic passage": null,
         "Crew died in the Americas": null,
         "Crew died on return voyage": null,
         "Crew died during complete voyage": null,
@@ -421,7 +421,7 @@ const voyage1234: MaterializedEntity = {
             id: 6
           }
         },
-        "Ton type": null,
+        "Definition of ton": null,
         "Tonnage of vessel": null,
         "Rig of vessel": {
           data: {
@@ -437,10 +437,10 @@ const voyage1234: MaterializedEntity = {
           }
         },
         "Guns mounted": null,
-        "Year of vessel's construction": null,
-        "Construction place": null,
-        "Year of vessel's registration": null,
-        "Registered place": null,
+        "Year of ship construction": null,
+        "Place where ship constructed": null,
+        "Year of ship registration": null,
+        "Place where ship registered": null,
         Nationality: {
           data: {
             "Nation name": "Spain / Uruguay",
@@ -466,7 +466,7 @@ const voyage1234: MaterializedEntity = {
     },
     Outcome: {
       data: {
-        "Particular Outcome": {
+        "Outcome of voyage": {
           data: {
             Name: "Voyage completed as intended",
             Value: 1,
@@ -479,7 +479,7 @@ const voyage1234: MaterializedEntity = {
             id: 2
           }
         },
-        Resistance: null,
+        "African resistance": null,
         "Enslaved Outcome": {
           data: {
             Name: "Slaves disembarked in Americas",
@@ -530,7 +530,7 @@ const voyage1234: MaterializedEntity = {
     },
     Itinerary: {
       data: {
-        "Port of departure": {
+        "Port of vessel's departure": {
           data: {
             Name: "Havana",
             Code: 31312,
@@ -543,19 +543,19 @@ const voyage1234: MaterializedEntity = {
             id: 1126
           }
         },
-        "First intended port of embarkation": null,
-        "Second intended port of embarkation": null,
-        "First intended port of disembarkation": null,
-        "Second intended port of disembarkation": null,
-        "Third intended port of disembarkation": null,
-        "Fourth intended port of disembarkation": null,
+        "First port of intended embarkation": null,
+        "Second port of intended embarkation": null,
+        "First port of intended disembarkation": null,
+        "Second port of intended disembarkation": null,
+        "Third port of intended disembarkation": null,
+        "Fourth port of intended disembarkation": null,
         "Number of ports of call prior to buying slaves": null,
-        "First place of slave purchase": null,
-        "Second place of slave purchase": null,
-        "Third place of slave purchase": null,
-        "Port of call before Atlantic crossing": null,
+        "First port of embarkation": null,
+        "Second port of embarkation": null,
+        "Third port of embarkation": null,
+        "Places of call before crossing": null,
         "Number of ports of call in Americas prior to sale of slaves": null,
-        "First place of slave landing": {
+        "First port of disembarkation": {
           data: {
             Name: "Cuba, port unspecified",
             Code: 31399,
@@ -568,9 +568,9 @@ const voyage1234: MaterializedEntity = {
             id: 1148
           }
         },
-        "Second place of slave landing": null,
-        "Third place of slave landing": null,
-        "Place at which voyage ended": null,
+        "Second port of disembarkation": null,
+        "Third port of disembarkation": null,
+        "Port at which voyage ended": null,
         "Imputed port where voyage began": {
           data: {
             Name: "Havana",
@@ -584,7 +584,7 @@ const voyage1234: MaterializedEntity = {
             id: 1126
           }
         },
-        "Principal place of slave purchase": null,
+        "Principal port of embarkation": null,
         "Imputed principal place of slave purchase": {
           data: {
             Name: "Africa, port unspecified",
@@ -598,7 +598,7 @@ const voyage1234: MaterializedEntity = {
             id: 1904
           }
         },
-        "Principal port of slave disembarkation": {
+        "Principal port of disembarkation": {
           data: {
             Name: "Cuba, port unspecified",
             Code: 31399,
@@ -639,7 +639,7 @@ const voyage1234: MaterializedEntity = {
         "Voyage length from home port to disembarkation (days)": 184,
         "Voyage length from last slave embarkation to first disembarkation (days)":
           null,
-        "Date that voyage began": {
+        "Date of vessel's departure": {
           data: {
             Year: 1831,
             Month: 5,
@@ -653,7 +653,7 @@ const voyage1234: MaterializedEntity = {
             id: 6182
           }
         },
-        "Date that slave purchase began": null,
+        "Date that embarkation began": null,
         "Date that vessel left last slaving port": null,
         "Date of first disembarkation of slaves": {
           data: {
@@ -672,8 +672,8 @@ const voyage1234: MaterializedEntity = {
         "Date vessel departed Africa": null,
         "Date of arrival at second place of landing": null,
         "Date of third disembarkation of slaves": null,
-        "Date of departure from last place of landing": null,
-        "Date on which slave voyage completed": null,
+        "Date that ship left on return voyage": null,
+        "Date when voyage completed": null,
         "Voyage began": {
           data: {
             Year: 1831,
