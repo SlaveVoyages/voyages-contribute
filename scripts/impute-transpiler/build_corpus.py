@@ -12,9 +12,11 @@ both sides would be reading the same wrong input.
     python scripts/impute-transpiler/build_corpus.py <csv> <out.json> [--limit N] [--iam]
 """
 import csv
+import io
 import json
 import os
 import sys
+import zipfile
 
 # InterimVoyage attribute <- codebook column carrying a place/nation/type code.
 CODED = {
@@ -136,6 +138,16 @@ def build(row, is_iam):
     return rec
 
 
+def open_csv(path):
+    """The vendored corpora are zipped, being immutable and large."""
+    if path.lower().endswith('.zip'):
+        with zipfile.ZipFile(path) as z:
+            name = next(n for n in z.namelist() if n.lower().endswith('.csv'))
+            data = z.read(name)
+        return io.StringIO(data.decode('utf-8-sig', errors='replace'))
+    return open(path, newline='', encoding='utf-8-sig', errors='replace')
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     flags = {a for a in sys.argv[1:] if a.startswith('--')}
@@ -151,7 +163,7 @@ def main():
 
     csv.field_size_limit(10 ** 7)
     out = []
-    with open(csv_path, newline='', encoding='utf-8-sig', errors='replace') as fh:
+    with open_csv(csv_path) as fh:
         reader = csv.DictReader(fh)
         reader.fieldnames = [c.strip().lower() for c in reader.fieldnames]
         for i, row in enumerate(reader):
