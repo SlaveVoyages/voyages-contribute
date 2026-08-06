@@ -479,7 +479,7 @@ const voyage1234: MaterializedEntity = {
             id: 2
           }
         },
-        Resistance: null,
+        "African resistance": null,
         "Enslaved Outcome": {
           data: {
             Name: "Slaves disembarked in Americas",
