@@ -679,10 +679,9 @@ export const voyageMapping: DataMapping = {
               targetField: "num_child_died_middle_passage",
               header: "child2"
             },
-            {
-              targetField: "num_infant_died_middle_passage",
-              header: "infant2"
-            },
+            // No entry for num_infant_died_middle_passage: the codebook defines
+            // INFANT1 and INFANT3 through INFANT6, but no INFANT2, so infant
+            // deaths on the middle passage have no source column.
             {
               targetField: "num_males_died_middle_passage",
               header: "male2"
