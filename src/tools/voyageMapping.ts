@@ -293,8 +293,7 @@ export const voyageMapping: DataMapping = {
       importUpdates: [
         {
           kind: "direct",
-          targetField:
-            "Voyage length from last slave embarkation to first disembarkation (days)",
+          targetField: "Length of transoceanic voyage in days",
           header: "voyage"
         },
         {
@@ -389,7 +388,7 @@ export const voyageMapping: DataMapping = {
             },
             {
               $dateHeader: "datedepam",
-              $targetField: "Date that vessel left last slaving port"
+              $targetField: "Date that ship left on return voyage"
             }
           ],
           mappings: [
