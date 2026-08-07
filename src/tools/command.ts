@@ -9,6 +9,7 @@ import {
 } from "./importer"
 import fs from "node:fs"
 import { randomUUID } from "crypto"
+import { runMigrateCommand } from "./migrate"
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -24,7 +25,14 @@ const asyncReadline = (question: string): Promise<string> => {
 const args = process.argv.slice(2)
 
 const [cmd] = args
-if (cmd === "inspect" && args.length >= 2) {
+if (cmd === "migrate") {
+  runMigrateCommand(args.slice(1))
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`Migration failed: ${(err as Error).message}`)
+      process.exit(1)
+    })
+} else if (cmd === "inspect" && args.length >= 2) {
   const [_, schemaName] = args
   const { mapping } = AllMappings[schemaName]
   const headers = debugCheckHeaders(mapping)
@@ -157,8 +165,9 @@ if (cmd === "inspect" && args.length >= 2) {
   process.exit(0)
 } else {
   console.error(
-    `Usage: npm run tools <command='import'|'inspect'> 
+    `Usage: npm run tools <command='import'|'inspect'|'migrate'> 
       import <apiUrl> <schemaName> <filename> (<maxRows>) (<contribStatus>)
-      inspect <schemaName> (<optional file to extract headers from>)`
+      inspect <schemaName> (<optional file to extract headers from>)
+      migrate (--status | --check) (--create-database)`
   )
 }
