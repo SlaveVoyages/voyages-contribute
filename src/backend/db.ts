@@ -12,7 +12,8 @@ import {
   Repository,
   In,
   EntityManager,
-  IsNull
+  IsNull,
+  Raw
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
@@ -280,6 +281,8 @@ export class DatabaseService {
       status?: ContributionStatus | ContributionStatus[]
       batchId?: number | null
       author?: string
+      /** Id of the root entity, e.g. a voyage id. */
+      rootId?: string | number
       sortBy?: "author" | "timestamp" | "id"
       sortOrder?: "ASC" | "DESC"
     } = {}
@@ -295,6 +298,7 @@ export class DatabaseService {
       status,
       batchId,
       author,
+      rootId,
       sortBy = "id",
       sortOrder = "ASC"
     } = options
@@ -325,6 +329,22 @@ export class DatabaseService {
 
     if (options.author) {
       where.changeSet = { author: options.author }
+    }
+
+    // `root` is a simple-json column, so it is matched as text. This lets a
+    // caller ask whether one entity already has a contribution instead of
+    // paging the whole table and filtering client side. Both spellings are
+    // matched because most rows serialise the id as a string while a few hold
+    // it as a number.
+    if (rootId !== undefined) {
+      const id = String(rootId)
+      where.root = Raw(
+        (column) => `(${column} LIKE :rootIdText OR ${column} LIKE :rootIdNum)`,
+        {
+          rootIdText: `%"id":"${id}"%`,
+          rootIdNum: `%"id":${id},%`
+        }
+      )
     }
 
     // Build order clause

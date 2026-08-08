@@ -26,6 +26,7 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
+import { hasEditorRole } from "./authz"
 
 // Load environment variables
 dotenv.config()
@@ -289,10 +290,18 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       }
     }
 
+    // Lets a client ask whether one entity already has a contribution, rather
+    // than paging the whole table to find out.
+    const rootId =
+      typeof req.query.root_id === "string" && req.query.root_id.length > 0
+        ? req.query.root_id
+        : undefined
+
     const result = await dbService.listContributions({
       ...getPaginationArgs(req),
       status,
-      batchId
+      batchId,
+      rootId
     })
 
     // Add pagination links to the response
@@ -501,10 +510,45 @@ app.patch(
         })
         return
       }
-      const existing = await dbService.getContribution(req.body.id)
+      // The id is still read from the body, as before, but it is no longer
+      // trusted blindly: an absent or mismatched id used to fall through to
+      // `getContribution(undefined)`, which does not return null -- an
+      // arbitrary row matches and was then saved over, silently changing the
+      // status of a contribution the caller never named.
+      if (req.body.id !== undefined && req.body.id !== req.params.id) {
+        res.status(400).json({
+          error: "Contribution id mismatch",
+          details: `Body id "${req.body.id}" does not match path id "${req.params.id}".`
+        })
+        return
+      }
+      const existing = await dbService.getContribution(
+        req.body.id ?? req.params.id
+      )
       if (!existing) {
         res.status(404).json({ error: "Contribution not found" })
         return
+      }
+      // Deciding a contribution is an editorial act; submitting one's own is
+      // not. Anything past Submitted requires the Editor role, and Submitted
+      // itself is limited to the contribution's author.
+      const user = (req as any).user
+      const isEditor = hasEditorRole(user?.app_metadata)
+      if (!isEditor) {
+        if (status !== ContributionStatus.Submitted) {
+          res.status(403).json({
+            error: "Editor role required",
+            details:
+              "Only an editor can accept, reject or publish a contribution."
+          })
+          return
+        }
+        if (existing.changeSet?.author !== getAuthorFromRequest(req)) {
+          res.status(403).json({
+            error: "You cannot submit contributions made by others"
+          })
+          return
+        }
       }
       let updatedContribution: ContributionEntity = {
         ...existing,
