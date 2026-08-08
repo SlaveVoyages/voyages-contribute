@@ -40,3 +40,6 @@ errors.json
 
 .claude
 slavevoyages*.tgz
+# Python bytecode from the impute transpiler
+__pycache__/
+*.pyc

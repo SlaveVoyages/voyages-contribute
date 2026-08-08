@@ -403,8 +403,8 @@ export const VoyageItinerarySchema = mkBuilder({
   })
   .build()
 
-const SectionShipNations = "Ship, Nations"
-const SectionCharacteristics = "Characteristics"
+const SectionShipNations = "Ship and nation"
+const SectionCharacteristics = "Enslaved (characteristics)"
 
 const slaveNumberPrefixes = [
   "num_men",
@@ -958,12 +958,9 @@ export const AfricanInfoSchema = mkBuilder({
   .build()
 
 /**
- * The Voyage <-> AfricanInfo relationship is many-to-many in production
- * (voyages-frontend-new-repo's CONST_DATA.ts filters on `african_info__name`
- * as a MultiselectList), modeled here the same way Cargo is: a connection
- * entity owned by the voyage. `backingTable`/`africaninfo_id` follow Django's
- * default M2M through-table naming convention but are NOT confirmed against
- * the production schema - verify before relying on this in prod.
+ * Backs the many-to-many `Voyage.african_info`, which has no explicit through
+ * model: the table and its `voyage_id`/`africaninfo_id` columns are the ones
+ * Django auto-creates for such a field.
  */
 export const VoyageAfricanInfoConnectionSchema = mkBuilder({
   name: "VoyageAfricanInfoConnectionSchema",
@@ -1041,7 +1038,7 @@ export const ParticularOutcomeSchema = mkBuilder({
   backingTable: "voyage_particularoutcome",
   contributionMode: "ReadOnly",
   pkField: "id",
-    getLabel: (d, short) => (short ? d.Name : `Outcome of voyage ${d.Name}`)
+  getLabel: (d, short) => (short ? d.Name : `Outcome of voyage ${d.Name}`)
 })
   .addText({ label: "Name", backingField: "name" })
   .addNumber({ label: "Value", backingField: "value" })
@@ -1672,25 +1669,25 @@ export const VoyageSchema = mkBuilder({
     linkedEntitySchema: EnslavementRelationSchema,
     editModes: ListEditMode.All,
     childBackingProp: "voyage_id",
-    section: "Enslavement Relations"
+    section: "Enslavers"
   })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
     linkedEntitySchema: VoyageOutcomeSchema,
     label: "Outcome",
     description: "Outcome of the voyage",
-    section: "Voyage Outcome"
+    section: "Voyage outcomes"
   })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
-    section: "Voyage Itinerary",
+    section: "Voyage itinerary",
     linkedEntitySchema: VoyageItinerarySchema,
     label: "Itinerary",
     notNull: true
   })
   .addEntityOwned({
     oneToOneBackingField: "voyage_id",
-    section: "Voyage Dates",
+    section: "Voyage dates",
     linkedEntitySchema: VoyageDatesSchema,
     label: "Dates",
     notNull: true
@@ -1706,7 +1703,7 @@ export const VoyageSchema = mkBuilder({
     oneToOneBackingField: "voyage_id",
     linkedEntitySchema: VoyageSlaveNumbersSchema,
     label: "Slave numbers",
-    section: "Slave numbers",
+    section: "Enslaved (numbers)",
     notNull: true
   })
   .addOwnedEntityList({
@@ -1714,7 +1711,7 @@ export const VoyageSchema = mkBuilder({
     linkedEntitySchema: VoyageAfricanInfoConnectionSchema,
     editModes: ListEditMode.All,
     childBackingProp: "voyage_id",
-    section: "Slave numbers",
+    section: "Enslaved (numbers)",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addOwnedEntityList({

@@ -1,0 +1,473 @@
+{
+  "entries": [
+    {
+      "section": "Ship and nation",
+      "label": "Name of vessel",
+      "schema": "VoyageShip",
+      "backingField": "ship_name",
+      "level": 0
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Place where ship constructed",
+      "schema": "VoyageShip",
+      "backingField": "vessel_construction_place",
+      "level": 2
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Place where ship registered",
+      "schema": "VoyageShip",
+      "backingField": "registered_place",
+      "level": 2
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Year of ship construction",
+      "schema": "VoyageShip",
+      "backingField": "year_of_construction",
+      "level": 2
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Year of ship registration",
+      "schema": "VoyageShip",
+      "backingField": "registered_year",
+      "level": 2
+    },
+    {
+      "section": "Ship and nation",
+      "label": "National carrier",
+      "schema": "VoyageShip",
+      "backingField": "nationality_ship",
+      "level": 0
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Rig of vessel",
+      "schema": "VoyageShip",
+      "backingField": "rig_of_vessel",
+      "level": 0
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Tonnage of vessel",
+      "schema": "VoyageShip",
+      "backingField": "tonnage",
+      "level": 2
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Definition of ton",
+      "schema": "VoyageShip",
+      "backingField": "ton_type",
+      "level": 2
+    },
+    {
+      "section": "Ship and nation",
+      "label": "Guns mounted",
+      "schema": "VoyageShip",
+      "backingField": "guns_mounted",
+      "level": 2
+    },
+    {
+      "section": "Voyage outcomes",
+      "label": "Outcome of voyage",
+      "schema": "VoyageOutcome",
+      "backingField": "particular_outcome",
+      "level": 0
+    },
+    {
+      "section": "Voyage outcomes",
+      "label": "African resistance",
+      "schema": "VoyageOutcome",
+      "backingField": "resistance",
+      "level": 0
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "First port of intended embarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "int_first_port_emb",
+      "level": 0
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Second port of intended embarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "int_second_port_emb",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "First port of intended disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "int_first_port_dis",
+      "level": 0
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Second port of intended disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "int_second_port_dis",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Third port of intended disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "int_third_port_dis",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Fourth port of intended disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "int_fourth_port_dis",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Port of vessel's departure",
+      "schema": "VoyageItinerary",
+      "backingField": "port_of_departure",
+      "level": 0
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Number of ports called prior to purchase",
+      "schema": "VoyageItinerary",
+      "backingField": "ports_called_buying_slaves",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "First port of embarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "first_place_slave_purchase",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Second port of embarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "second_place_slave_purchase",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Third port of embarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "third_place_slave_purchase",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Principal port of embarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "principal_place_of_slave_purchase",
+      "level": 0
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Places of call before crossing",
+      "schema": "VoyageItinerary",
+      "backingField": "port_of_call_before_atl_crossing",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Number of ports of call before disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "number_of_ports_of_call",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "First port of disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "first_landing_place",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Second port of disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "second_landing_place",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Third port of disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "third_landing_place",
+      "level": 2
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Principal port of disembarkation",
+      "schema": "VoyageItinerary",
+      "backingField": "principal_port_of_slave_dis",
+      "level": 0
+    },
+    {
+      "section": "Voyage itinerary",
+      "label": "Port at which voyage ended",
+      "schema": "VoyageItinerary",
+      "backingField": "place_voyage_ended",
+      "level": 0
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date of vessel's departure",
+      "schema": "VoyageDates",
+      "backingField": "voyage_began_sparsedate",
+      "level": 0
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date that embarkation began",
+      "schema": "VoyageDates",
+      "backingField": "slave_purchase_began_sparsedate",
+      "level": 2
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date that vessel left last slaving port",
+      "schema": "VoyageDates",
+      "backingField": "vessel_left_port_sparsedate",
+      "level": 0
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date of first disembarkation",
+      "schema": "VoyageDates",
+      "backingField": "first_dis_of_slaves_sparsedate",
+      "level": 0
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date of second disembarkation",
+      "schema": "VoyageDates",
+      "backingField": "arrival_at_second_place_landing_sparsedate",
+      "level": 2
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date of third disembarkation",
+      "schema": "VoyageDates",
+      "backingField": "third_dis_of_slaves_sparsedate",
+      "level": 2
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date that ship left on return voyage",
+      "schema": "VoyageDates",
+      "backingField": "departure_last_place_of_landing_sparsedate",
+      "level": 0
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Date when voyage completed",
+      "schema": "VoyageDates",
+      "backingField": "voyage_completed_sparsedate",
+      "level": 0
+    },
+    {
+      "section": "Voyage dates",
+      "label": "Length of transoceanic voyage in days",
+      "schema": "VoyageDates",
+      "backingField": "length_middle_passage_days",
+      "level": 0
+    },
+    {
+      "section": "Crew",
+      "label": "Crew at voyage outset",
+      "schema": "VoyageCrew",
+      "backingField": "crew_voyage_outset",
+      "level": 0
+    },
+    {
+      "section": "Crew",
+      "label": "Crew at departure from last port of embarkation",
+      "schema": "VoyageCrew",
+      "backingField": "crew_departure_last_port",
+      "level": 0
+    },
+    {
+      "section": "Crew",
+      "label": "Crew at first port of disembarkation",
+      "schema": "VoyageCrew",
+      "backingField": "crew_first_landing",
+      "level": 0
+    },
+    {
+      "section": "Crew",
+      "label": "Crew when return voyage began",
+      "schema": "VoyageCrew",
+      "backingField": "crew_return_begin",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Crew at end of voyage",
+      "schema": "VoyageCrew",
+      "backingField": "crew_end_voyage",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Number of crew if voyage stage unknown",
+      "schema": "VoyageCrew",
+      "backingField": "unspecified_crew",
+      "level": 0
+    },
+    {
+      "section": "Crew",
+      "label": "Crew died before first place of trade in Africa",
+      "schema": "VoyageCrew",
+      "backingField": "crew_died_before_first_trade",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Crew died while ship was on African coast",
+      "schema": "VoyageCrew",
+      "backingField": "crew_died_while_ship_african",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Crew died during transoceanic passage",
+      "schema": "VoyageCrew",
+      "backingField": "crew_died_middle_passage",
+      "level": 0
+    },
+    {
+      "section": "Crew",
+      "label": "Crew died in the Americas",
+      "schema": "VoyageCrew",
+      "backingField": "crew_died_in_americas",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Crew died on return voyage",
+      "schema": "VoyageCrew",
+      "backingField": "crew_died_on_return_voyage",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Crew died during complete voyage",
+      "schema": "VoyageCrew",
+      "backingField": "crew_died_complete_voyage",
+      "level": 2
+    },
+    {
+      "section": "Crew",
+      "label": "Total number of crew deserted",
+      "schema": "VoyageCrew",
+      "backingField": "crew_deserted",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives intended from first port of embarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_intended_first_port",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives intended from second port of embarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_intended_second_port",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives carried from first port of embarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_carried_first_port",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives carried from second port of embarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_carried_second_port",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives carried from third port of embarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_carried_third_port",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Total captives embarked",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "total_num_slaves_purchased",
+      "level": 0
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Total captives on board at departure from last slaving port",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "total_num_slaves_dep_last_slaving_port",
+      "level": 0
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Total captives arrived at first port of disembarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "total_num_slaves_arr_first_port_embark",
+      "level": 0
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives landed at first port of disembarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_disembark_first_place",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives landed at second port of disembarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_disembark_second_place",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Captives landed at third port of disembarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "num_slaves_disembark_third_place",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Deaths before leaving broad region of embarkation",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "slave_deaths_before_africa",
+      "level": 2
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Deaths in the transoceanic voyage",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "slave_deaths_between_africa_america",
+      "level": 0
+    },
+    {
+      "section": "Enslaved (numbers)",
+      "label": "Deaths between arrival and sale",
+      "schema": "VoyageSlaveNumbers",
+      "backingField": "slave_deaths_between_arrival_and_sale",
+      "level": 2
+    }
+  ]
+}

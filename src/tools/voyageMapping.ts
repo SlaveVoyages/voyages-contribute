@@ -96,10 +96,26 @@ export const voyageMapping: DataMapping = {
           header: "guns"
         },
         {
+          kind: "direct",
+          targetField: "Year of ship construction",
+          header: "yrcons"
+        },
+        {
+          kind: "direct",
+          targetField: "Year of ship registration",
+          header: "yrreg"
+        },
+        {
           kind: "linked",
           targetField: "Nationality",
           header: "natinimp",
           lookupField: "Code"
+        },
+        {
+          kind: "direct",
+          targetField:
+            "Tonnage standardized on British measured tons, 1773-1870",
+          header: "tonmod"
         }
       ]
     },
@@ -126,8 +142,53 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "direct",
+          targetField: "Crew when return voyage began",
+          header: "crew4"
+        },
+        {
+          kind: "direct",
+          targetField: "Crew at end of voyage",
+          header: "crew5"
+        },
+        {
+          kind: "direct",
+          targetField: "Number of crew if voyage stage unknown",
+          header: "crew"
+        },
+        {
+          kind: "direct",
+          targetField: "Crew died before first place of trade in Africa",
+          header: "saild1"
+        },
+        {
+          kind: "direct",
+          targetField: "Crew died while ship was on African coast",
+          header: "saild2"
+        },
+        {
+          kind: "direct",
+          targetField: "Crew died during transoceanic passage",
+          header: "saild3"
+        },
+        {
+          kind: "direct",
+          targetField: "Crew died in the Americas",
+          header: "saild4"
+        },
+        {
+          kind: "direct",
+          targetField: "Crew died on return voyage",
+          header: "saild5"
+        },
+        {
+          kind: "direct",
           targetField: "Crew died during complete voyage",
           header: "crewdied"
+        },
+        {
+          kind: "direct",
+          targetField: "Total number of crew deserted",
+          header: "ndesert"
         }
       ]
     },
@@ -236,6 +297,17 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "linked",
+          targetField: "Places of call before crossing",
+          header: "npafttra",
+          lookupField: "Code"
+        },
+        {
+          kind: "direct",
+          targetField: "Number of ports of call before disembarkation",
+          header: "npprior"
+        },
+        {
+          kind: "linked",
           targetField: "First port of disembarkation",
           header: "sla1port",
           lookupField: "Code"
@@ -293,8 +365,7 @@ export const voyageMapping: DataMapping = {
       importUpdates: [
         {
           kind: "direct",
-          targetField:
-            "Voyage length from last slave embarkation to first disembarkation (days)",
+          targetField: "Length of transoceanic voyage in days",
           header: "voyage"
         },
         {
@@ -373,7 +444,7 @@ export const voyageMapping: DataMapping = {
             },
             {
               $dateHeader: "dateleftafr",
-              $targetField: "Date vessel departed Africa"
+              $targetField: "Date that vessel left last slaving port"
             },
             {
               $dateHeader: "dateland1",
@@ -389,7 +460,7 @@ export const voyageMapping: DataMapping = {
             },
             {
               $dateHeader: "datedepam",
-              $targetField: "Date that vessel left last slaving port"
+              $targetField: "Date that ship left on return voyage"
             }
           ],
           mappings: [
@@ -608,6 +679,8 @@ export const voyageMapping: DataMapping = {
               targetField: "num_child_died_middle_passage",
               header: "child2"
             },
+            // INFANT2 is undocumented in SPSS_Codebook_2024-12-17, apparently an
+            // omission; the name comes from the Django field's own label.
             {
               targetField: "num_infant_died_middle_passage",
               header: "infant2"
@@ -1051,6 +1124,21 @@ export const voyageMapping: DataMapping = {
         },
         {
           $sourceHeader: "sourcem"
+        },
+        {
+          $sourceHeader: "sourcen"
+        },
+        {
+          $sourceHeader: "sourceo"
+        },
+        {
+          $sourceHeader: "sourcep"
+        },
+        {
+          $sourceHeader: "sourceq"
+        },
+        {
+          $sourceHeader: "sourcer"
         }
       ],
       mappings: [
@@ -1104,6 +1192,17 @@ export const voyageMapping: DataMapping = {
         "ownerc",
         "ownerd",
         "ownere",
+        "ownerf",
+        "ownerg",
+        "ownerh",
+        "owneri",
+        "ownerj",
+        "ownerk",
+        "ownerl",
+        "ownerm",
+        "ownern",
+        "ownero",
+        "ownerp",
         "captaina",
         "captainb",
         "captainc"
@@ -1143,6 +1242,50 @@ export const voyageMapping: DataMapping = {
                     },
                     {
                       $enslaver: "ownere",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerf",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerg",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerh",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "owneri",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerj",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerk",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerl",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerm",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownern",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownero",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerp",
                       $enslaverRoleId: "4"
                     },
                     {
@@ -1264,10 +1407,18 @@ export const voyageMapping: DataMapping = {
         "regisreg",
         "regem1",
         "regem2",
+        "regem3",
         "regarr",
+        "regarr2",
         "regdis1",
         "regdis2",
         "regdis3",
+        "embreg",
+        "embreg2",
+        "retrnreg",
+        "retrnreg1",
+        "deptregimp",
+        "deptregimp1",
         "majbyimp",
         "majbyimp1",
         "mjselimp",
@@ -1289,17 +1440,48 @@ export const voyageMapping: DataMapping = {
     {
       kind: "ignored",
       headers: [
+        "datedepa",
+        "datedepb",
         "datedepc",
+        "d1slatra",
+        "d1slatrb",
         "d1slatrc",
-        "datarr34",
-        "datarr38",
-        "datarr41",
+        "dlslatra",
+        "dlslatrb",
         "dlslatrc",
+        "datarr32",
+        "datarr33",
+        "datarr34",
+        "datarr36",
+        "datarr37",
+        "datarr38",
+        "datarr39",
+        "datarr40",
+        "datarr41",
+        "ddepam",
+        "ddepamb",
         "ddepamc",
+        "datarr43",
+        "datarr44",
         "datarr45"
       ],
       reason:
         "This date component is found as part of a sparse date in a different column"
+    },
+    {
+      kind: "ignored",
+      headers: ["voyageid2"],
+      reason:
+        "Not yet modelled, see issue #6: this is a delimited list of voyage ids " +
+        "that pairs this voyage with others (Django keeps them in LinkedVoyages, " +
+        "with mode=INTRA_AMERICAN_LINK_MODE for an Intra-American/Trans-Atlantic " +
+        "pair). Mapping it needs a LinkedVoyages schema in entities.ts."
+    },
+    {
+      kind: "ignored",
+      headers: ["evgreen"],
+      reason:
+        "Provenance flag for the 1999 CD-ROM, with no corresponding entity field"
     }
   ]
 }
