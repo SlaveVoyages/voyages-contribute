@@ -260,6 +260,29 @@ export class DatabaseService {
     })
   }
 
+  // How many contributions a batch holds of each status, keyed by status.
+  // Counted in SQL rather than by loading the contributions, since the only
+  // caller wants the tally for an error message and the full rows carry their
+  // change sets with them.
+  async getBatchContributionStatusCounts(
+    batchId: number
+  ): Promise<Partial<Record<ContributionStatus, number>>> {
+    const rows = await this.contributionRepo
+      .createQueryBuilder("contribution")
+      .select("contribution.status", "status")
+      .addSelect("COUNT(*)", "count")
+      .where("contribution.batchId = :batchId", { batchId })
+      .groupBy("contribution.status")
+      .getRawMany<{ status: number; count: number }>()
+    return rows.reduce<Partial<Record<ContributionStatus, number>>>(
+      (counts, row) => {
+        counts[row.status as ContributionStatus] = Number(row.count)
+        return counts
+      },
+      {}
+    )
+  }
+
   async getContribution(id: string): Promise<ContributionEntity | null> {
     return getFullContribution(AppDataSource.manager, id)
   }
@@ -596,6 +619,28 @@ export class DatabaseService {
   // Delete a publication batch by id (only call if it has no contributions!)
   async deleteBatch(batchId: number): Promise<boolean> {
     const result = await this.batchRepository.delete(batchId)
+    return (result.affected ?? 0) > 0
+  }
+
+  // Stamp a batch as published.
+  //
+  // Only fills a `published` that is still null. Publication is polled, so this
+  // runs once per poll after the run completes; without the guard the second
+  // poll would keep pushing the timestamp forward, and a re-publish of the same
+  // batch would erase the original date.
+  //
+  // Returns whether this call was the one that stamped it.
+  async markBatchPublished(
+    batchId: number,
+    publishedAt: number = Date.now()
+  ): Promise<boolean> {
+    const result = await this.batchRepository
+      .createQueryBuilder()
+      .update(PublicationBatchEntity)
+      .set({ published: publishedAt })
+      .where("id = :batchId", { batchId })
+      .andWhere("published IS NULL")
+      .execute()
     return (result.affected ?? 0) > 0
   }
 
