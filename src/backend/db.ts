@@ -359,11 +359,10 @@ export class DatabaseService {
     // name to show records.
     //
     // No case folding here, deliberately: an address is lowered once, where
-    // the token is read, so both sides of this are already in the same form.
-    // `LOWER()` would not agree with the JavaScript checking the same
-    // ownership per row, since sqlite folds ASCII only — and a rule that says
-    // yes per row and no per query lets a contributor open a contribution that
-    // never appears in their list.
+    // the token is read, so both sides of this are already in the same form
+    // for every author this code writes. `LOWER()` would only add a second,
+    // different folding — SQL folds by collation and JavaScript by Unicode —
+    // on top of one the data does not need.
     if (author) {
       const identity = authorIdentity(author)
       where.changeSet = {

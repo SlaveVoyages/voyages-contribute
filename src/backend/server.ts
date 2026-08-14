@@ -27,8 +27,13 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
-import { authorIdentity, hasEditorRole, requireEditor } from "./authz"
-import { isExactEntityRef } from "../models/changeSets"
+import {
+  authorIdentity,
+  decideStatusChange,
+  hasEditorRole,
+  requireEditor
+} from "./authz"
+import { areMatch, isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
 dotenv.config()
@@ -309,11 +314,12 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     }
     const rootId = readFilter("root_id")
     const rootSchema = readFilter("root_schema")
-    if (rootId === null || rootSchema === null) {
+    const requestedAuthor = readFilter("author")
+    if (rootId === null || rootSchema === null || requestedAuthor === null) {
       res.status(400).json({
         error: "Invalid filter",
         details:
-          "root_id and root_schema each take a single non-empty value."
+          "root_id, root_schema and author each take a single non-empty value."
       })
       return
     }
@@ -326,10 +332,6 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     // to enumerate — and asking for it is refused rather than quietly answered
     // with their own, which would look like an authoritative answer about
     // somebody else.
-    const requestedAuthor =
-      typeof req.query.author === "string" && req.query.author.length > 0
-        ? req.query.author
-        : undefined
     if (
       requestedAuthor !== undefined &&
       !isEditor &&
@@ -562,13 +564,23 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
  */
 const mayActOnContribution = (
   req: Request,
-  contribution: { changeSet?: { author?: string } } | null | undefined
+  contribution:
+    | { status?: ContributionStatus; changeSet?: { author?: string } }
+    | null
+    | undefined
 ): boolean => {
   if (!contribution) {
     return false
   }
   if (hasEditorRole((req as any).user?.app_metadata)) {
     return true
+  }
+  // An author acts on a draft. Once a contribution has been decided its
+  // content is fixed — replacing it is already refused, and removing the
+  // source an editor accepted it on would leave the decision resting on
+  // something no longer there.
+  if (contribution.status !== ContributionStatus.WorkInProgress) {
+    return false
   }
   const identity = getAuthorIdentity(req)
   return (
@@ -599,6 +611,18 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
       res
         .status(403)
         .json({ error: "You cannot modify contributions made by others" })
+      return
+    }
+    // What a contribution is about is fixed when it is created. Replacing one
+    // may change every field of the work, but repointing it at another entity
+    // makes a different contribution wearing the same id — and invalidates the
+    // answer any client was given about whether that entity was already taken.
+    if (existing && !areMatch(existing.root, req.body.root)) {
+      res.status(400).json({
+        error: "Root mismatch",
+        details:
+          "A contribution cannot be repointed at another entity. Create a new one."
+      })
       return
     }
     // If the status is not ContributionStatus.WorkInProgress, we must reject
@@ -674,11 +698,7 @@ app.patch(
         res.status(404).json({ error: "Contribution not found" })
         return
       }
-      // Deciding a contribution is an editorial act; submitting one's own is
-      // not. Anything past Submitted requires the Editor role, and Submitted
-      // itself is limited to the contribution's author.
-      const user = (req as any).user
-      const isEditor = hasEditorRole(user?.app_metadata)
+      const identity = getAuthorIdentity(req)
       // A comment is absent, or it is supplied — including as null, which asks
       // for the existing one to go. The two differ: absent leaves a repeated
       // request with nothing to do, while an explicit null is a change.
@@ -689,69 +709,27 @@ app.patch(
           ? null
           : String(decisionComments)
 
-      // Whether the caller may touch this contribution at all is settled
-      // first, before anything is returned or reported about it. Deciding one
-      // is an editorial act; submitting one's own is not.
-      if (!isEditor) {
-        // The comment records an editor's reasoning for a decision, so an
-        // author submitting their own work cannot write one and have it read
-        // back later as an editorial verdict.
-        if (commentSupplied) {
-          res.status(403).json({
-            error: "Editor role required",
-            details: "Only an editor can record decision comments."
-          })
-          return
-        }
-        const identity = getAuthorIdentity(req)
-        if (
-          !identity ||
-          authorIdentity(existing.changeSet?.author ?? "") !== identity
-        ) {
-          res.status(403).json({
-            error: "You cannot change contributions made by others"
-          })
-          return
-        }
+      const verdict = decideStatusChange({
+        isEditor: hasEditorRole((req as any).user?.app_metadata),
+        isAuthor:
+          !!identity &&
+          authorIdentity(existing.changeSet?.author ?? "") === identity,
+        from: existing.status,
+        to: status,
+        commentSupplied
+      })
+      if (verdict.kind === "refuse") {
+        res.status(verdict.status).json({
+          error: verdict.error,
+          ...(verdict.details ? { details: verdict.details } : {})
+        })
+        return
       }
-
-      // A request for the state a contribution is already in, carrying nothing
-      // else, has nothing to do. Without this a client whose response was lost
-      // in transit retries a submission that went through and is told it lacks
-      // permission for it. A request that also carries a comment is a
-      // correction to that comment, so it goes on.
-      if (existing.status === status && !commentSupplied) {
+      if (verdict.kind === "noop") {
         res.json(existing)
         return
       }
 
-      if (!isEditor) {
-        if (status !== ContributionStatus.Submitted) {
-          res.status(403).json({
-            error: "Editor role required",
-            details:
-              "Only an editor can accept, reject or publish a contribution."
-          })
-          return
-        }
-        // Submitting is a step forward from a draft, so it is only offered
-        // from one. Without this an author could walk their own decided
-        // contribution back to Submitted, and a published one has already
-        // been applied upstream.
-        //
-        // A rejected contribution is not a draft: its content can no longer be
-        // edited, so resubmitting it could only put the same thing back in the
-        // queue. Reopening one is an editorial act until there is a way to
-        // revise it.
-        if (existing.status !== ContributionStatus.WorkInProgress) {
-          res.status(403).json({
-            error: "Editor role required",
-            details:
-              "Only an editor can change the status of a contribution that has already been decided."
-          })
-          return
-        }
-      }
       // A comment explains one decision, so it does not outlive it: moving to
       // a different status without supplying a new one clears it. Carrying it
       // over would show the reason a contribution was rejected as though it
@@ -1160,7 +1138,9 @@ app.patch("/assign_to_batch", authenticateJWT, requireEditor, async (req, res) =
 })
 
 // Get batches by status
-app.get("/batches/:filter", authenticateJWT, async (req, res) => {
+// A batch carries its contributions and their change sets, so listing one
+// reads everybody's work. Editorial, like the rest of the batch routes.
+app.get("/batches/:filter", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const filter = req.params.filter
     // Validate filter parameter

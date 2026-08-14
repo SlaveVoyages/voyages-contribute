@@ -100,9 +100,8 @@ test("an author is found by address, whatever name is recorded beside it", async
   expect(authorIdentity("Jane Doe <j@x.com>")).toBe("j@x.com")
   expect(authorIdentity("j@x.com")).toBe("j@x.com")
   // Taken as recorded, never case-folded: an address is lowered once, where
-  // the token is read, and folding again here would not agree with the SQL
-  // doing the same job — sqlite folds ASCII only. The row below shows what
-  // that costs.
+  // the token is read, so recorded values arrive already in the form they are
+  // compared against.
   expect(authorIdentity("  J@X.com  ")).toBe("J@X.com")
   expect(authorIdentity("Evil <victim@x.com> <attacker@x.com>")).toBe(
     "attacker@x.com"
@@ -120,10 +119,9 @@ test("an author is found by address, whatever name is recorded beside it", async
     "Jane Doe <j@x.com>",
     "Jane Q. Doe <j@x.com>",
     "Someone Else <other@x.com>",
-    // An address that was never lowered — which nothing here writes, but a
-    // row could hold. It has to be judged the same way by the list and by the
-    // per-row check; folding in one place and not the other is what lets a
-    // contributor open a contribution that never appears in their list.
+    // An address in some other case, which nothing here writes: an address is
+    // lowered where the token is read. Recorded values are compared as they
+    // stand, so this one belongs to nobody.
     "José Álvarez <JOSÉ@x.com>"
   ]
   for (const [index, authorValue] of stored.entries()) {
@@ -159,10 +157,10 @@ test("an author is found by address, whatever name is recorded beside it", async
   })
   expect(theirs.data.map((c) => c.id)).toEqual(["author-3"])
 
-  // The list and the ownership check must reach the same verdict about the
-  // unlowered row. A token carrying JOSÉ@x.com presents it as josé@x.com, and
-  // neither says that owns author-4 — where case-folding on only one side
-  // would have had the check say yes and the list say no.
+  // A token carrying JOSÉ@x.com presents it as josé@x.com, which owns nothing
+  // here. Both halves of the rule agree on that, as they do on every address
+  // this code records — the case where they could not is the one nothing
+  // writes.
   const asToken = "josé@x.com"
   expect(authorIdentity("José Álvarez <JOSÉ@x.com>")).not.toBe(asToken)
   const accented = await service.listContributions({
