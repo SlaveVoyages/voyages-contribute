@@ -4,12 +4,7 @@ import express, {
   NextFunction,
   ErrorRequestHandler
 } from "express"
-import {
-  initDatabase,
-  DatabaseService,
-  ContributionEntity,
-  AppDataSource
-} from "./db"
+import { initDatabase, DatabaseService, AppDataSource } from "./db"
 import { ensureDatabaseExists, prepareSchema, readMigrationMode } from "./schema"
 import { jwtVerify, createRemoteJWKSet } from "jose"
 import dotenv from "dotenv"
@@ -32,6 +27,13 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
+import {
+  authorIdentity,
+  decideStatusChange,
+  hasEditorRole,
+  requireEditor
+} from "./authz"
+import { areMatch, isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
 dotenv.config()
@@ -295,31 +297,116 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       }
     }
 
+    // Lets a client ask whether one entity already has a contribution, rather
+    // than paging the whole table to find out. The schema narrows it, since
+    // ids are only unique within one.
+    //
+    // A filter that cannot be read is refused rather than dropped: a repeated
+    // `?root_id=` arrives as an array, and silently ignoring it would answer
+    // "does this entity have a contribution?" with the whole table, which
+    // reads as yes for everything.
+    const readFilter = (name: string): string | undefined | null => {
+      const raw = req.query[name]
+      if (raw === undefined) {
+        return undefined
+      }
+      return typeof raw === "string" && raw.length > 0 ? raw : null
+    }
+    const rootId = readFilter("root_id")
+    const rootSchema = readFilter("root_schema")
+    const requestedAuthor = readFilter("author")
+    if (rootId === null || rootSchema === null || requestedAuthor === null) {
+      res.status(400).json({
+        error: "Invalid filter",
+        details:
+          "root_id, root_schema and author each take a single non-empty value."
+      })
+      return
+    }
+
+    const isEditor = hasEditorRole((req as any).user?.app_metadata)
+    const ownIdentity = getAuthorIdentity(req)
+
+    // Narrowing to one author is how a contributor lists their own work at any
+    // status, which /contributions/wip cannot do. Other people's is not theirs
+    // to enumerate — and asking for it is refused rather than quietly answered
+    // with their own, which would look like an authoritative answer about
+    // somebody else.
+    if (
+      requestedAuthor !== undefined &&
+      !isEditor &&
+      authorIdentity(requestedAuthor).toLowerCase() !== ownIdentity
+    ) {
+      res
+        .status(403)
+        .json({ error: "You cannot list contributions made by others" })
+      return
+    }
+    // Whoever asked, the query runs on the identity as it is recorded, so the
+    // spelling a client happened to use cannot narrow the result to nothing.
+    const author =
+      requestedAuthor === undefined
+        ? undefined
+        : isEditor
+          ? requestedAuthor
+          : (ownIdentity ?? undefined)
+
     const result = await dbService.listContributions({
       ...getPaginationArgs(req),
       status,
-      batchId
+      batchId,
+      rootId,
+      rootSchema,
+      author
     })
+
+    // Any contributor may ask what is already being worked on — that is how a
+    // form finds out a voyage is taken before offering to edit it. Someone
+    // else's work is not theirs to read, though, so an entry they did not
+    // write says that it exists and what it is about, and nothing more.
+    const data = result.data.map((contribution) =>
+      isEditor ||
+      authorIdentity(contribution.changeSet?.author ?? "") === ownIdentity
+        ? contribution
+        : {
+            id: contribution.id,
+            root: contribution.root,
+            status: contribution.status
+          }
+    )
 
     // Add pagination links to the response
     const baseUrl = `${req.protocol}://${req.get("host")}${req.baseUrl}${req.path}`
     const totalPages = Math.ceil(result.total / result.limit)
 
+    // Carry every filter into the links, so a page beyond the first describes
+    // the same set as the totals reported alongside it.
+    // Only values that survive a round trip are echoed. A nested parameter
+    // arrives as an object, and stringifying one would put "[object Object]"
+    // in a link that claims to describe this same set.
+    const filters = Object.entries(req.query)
+      .filter(([key]) => key !== "page" && key !== "limit")
+      .flatMap(([key, value]) => (Array.isArray(value) ? value : [value]).map((one) => [key, one] as const))
+      .filter(([, one]) => typeof one === "string")
+      .map(
+        ([key, one]) =>
+          `&${encodeURIComponent(key)}=${encodeURIComponent(one as string)}`
+      )
+      .join("")
+    const pageUrl = (page: number) =>
+      `${baseUrl}?page=${page}&limit=${result.limit}${filters}`
+
     const response = {
       ...result,
+      data,
       totalPages,
       links: {
-        self: `${baseUrl}?page=${result.page}&limit=${result.limit}`,
-        first: `${baseUrl}?page=1&limit=${result.limit}`,
-        last: `${baseUrl}?page=${totalPages}&limit=${result.limit}`,
-        next:
-          result.page < totalPages
-            ? `${baseUrl}?page=${result.page + 1}&limit=${result.limit}`
-            : null,
-        prev:
-          result.page > 1
-            ? `${baseUrl}?page=${result.page - 1}&limit=${result.limit}`
-            : null
+        self: pageUrl(result.page),
+        first: pageUrl(1),
+        // An empty result still has a first page to point at.
+        last: pageUrl(Math.max(totalPages, 1)),
+        next: result.page < totalPages ? pageUrl(result.page + 1) : null,
+        prev: result.page > 1 ? pageUrl(result.page - 1) : null
       }
     }
 
@@ -367,6 +454,19 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
       return
     }
 
+    // A contribution is someone's unpublished work, so reading one whole is
+    // for its author and for editors.
+    if (
+      !hasEditorRole((req as any).user?.app_metadata) &&
+      authorIdentity(contribution.changeSet?.author ?? "") !==
+        getAuthorIdentity(req)
+    ) {
+      res
+        .status(403)
+        .json({ error: "You cannot read contributions made by others" })
+      return
+    }
+
     res.json(contribution)
   } catch (error) {
     console.error(`Error fetching contribution ${req.params.id}:`, error)
@@ -374,29 +474,47 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
   }
 })
 
-const getAuthorFromRequest = (req: Request): string | null => {
+/**
+ * The verified identity of the requester, which every authorization check
+ * compares.
+ *
+ * Only claims the token carries are considered, and the address is preferred:
+ * a display name lives in `user_metadata`, which the account holder edits at
+ * will, so identifying by name would let one account claim another's work by
+ * copying its name. The subject stands in for a token carrying no email, so
+ * such an account still has an identity rather than none.
+ */
+const getAuthorIdentity = (req: Request): string | null => {
   const user = (req as any).user
-
-  if (!user) {
+  if (!user || typeof user !== "object") {
     return null
   }
+  const claim = [user.email, user.id].find(
+    (value) => typeof value === "string" && value.trim().length > 0
+  )
+  return claim ? claim.trim().toLowerCase() : null
+}
 
-  // For Supabase tokens, user will have id, email, and metadata
-  if (typeof user === "object" && user.metadata) {
-    const { firstName, lastName } = user.metadata
-    if (firstName && lastName) {
-      return `${firstName} ${lastName}`
-    }
-    if (firstName) {
-      return firstName
-    }
+/**
+ * How a request's author is recorded: `Jane Doe <doe.j@example.com>`, or the
+ * address alone when the account has no name to show.
+ *
+ * The name makes a contribution legible to the next reader; the address is the
+ * part that means anything, and the only part compared. Brackets are stripped
+ * from the name so the address at the end stays unambiguous.
+ */
+const getAuthorFromRequest = (req: Request): string | null => {
+  const identity = getAuthorIdentity(req)
+  if (!identity) {
+    return null
   }
-
-  // Author identity must come from the verified token only; never trust
-  // client-supplied values like req.body.changeSet.author for authorization.
-  const author = user?.email || user?.username || user?.name
-
-  return author || null
+  const { firstName, lastName } = (req as any).user?.metadata ?? {}
+  const name = [firstName, lastName]
+    .filter((part) => typeof part === "string")
+    .join(" ")
+    .replace(/[<>]/g, "")
+    .trim()
+  return name ? `${name} <${identity}>` : identity
 }
 
 app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
@@ -414,7 +532,7 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
       res.status(404).json({ error: "Contribution not found" })
       return
     }
-    if (existing.changeSet.author !== author) {
+    if (authorIdentity(existing.changeSet.author) !== getAuthorIdentity(req)) {
       res
         .status(403)
         .json({ error: "You cannot delete contributions made by others" })
@@ -439,18 +557,72 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
 })
 
 // Create new/replace contribution
+/**
+ * Whether the request may act on a contribution. Its author may, and so may an
+ * editor: attaching a file to someone's work, or taking one off it, changes
+ * that work as surely as editing it does.
+ */
+const mayActOnContribution = (
+  req: Request,
+  contribution:
+    | { status?: ContributionStatus; changeSet?: { author?: string } }
+    | null
+    | undefined
+): boolean => {
+  if (!contribution) {
+    return false
+  }
+  if (hasEditorRole((req as any).user?.app_metadata)) {
+    return true
+  }
+  // An author acts on a draft. Once a contribution has been decided its
+  // content is fixed — replacing it is already refused, and removing the
+  // source an editor accepted it on would leave the decision resting on
+  // something no longer there.
+  if (contribution.status !== ContributionStatus.WorkInProgress) {
+    return false
+  }
+  const identity = getAuthorIdentity(req)
+  return (
+    !!identity && authorIdentity(contribution.changeSet?.author ?? "") === identity
+  )
+}
+
 app.post("/contributions", authenticateJWT, async (req, res) => {
   try {
     const author = getAuthorFromRequest(req)
+    if (!isExactEntityRef(req.body.root)) {
+      res.status(400).json({
+        error: "Invalid root",
+        details:
+          "root must name one entity as { type, schema, id } and carry nothing else."
+      })
+      return
+    }
     // Check if contribution already exists
     const existing = req.body.id
       ? await dbService.getContribution(req.body.id)
       : null
     // If existing it must match the user.
-    if (existing && existing.changeSet?.author !== author) {
+    if (
+      existing &&
+      authorIdentity(existing.changeSet?.author ?? "") !== getAuthorIdentity(req)
+    ) {
       res
         .status(403)
         .json({ error: "You cannot modify contributions made by others" })
+      return
+    }
+    // What a contribution is about is fixed when it is created. Replacing one
+    // may change every field of the work, but repointing it at another entity
+    // makes a different contribution wearing the same id — and invalidates the
+    // answer any client was given about whether that entity was already taken.
+    if (existing && !areMatch(existing.root, req.body.root)) {
+      res.status(400).json({
+        error: "Root mismatch",
+        details:
+          "A contribution cannot be repointed at another entity. Create a new one."
+      })
       return
     }
     // If the status is not ContributionStatus.WorkInProgress, we must reject
@@ -507,18 +679,75 @@ app.patch(
         })
         return
       }
-      const existing = await dbService.getContribution(req.body.id)
+      // The id is still read from the body, as before, but it is no longer
+      // trusted blindly: an absent or mismatched id used to fall through to
+      // `getContribution(undefined)`, which does not return null -- an
+      // arbitrary row matches and was then saved over, silently changing the
+      // status of a contribution the caller never named.
+      if (req.body.id !== undefined && req.body.id !== req.params.id) {
+        res.status(400).json({
+          error: "Contribution id mismatch",
+          details: `Body id "${req.body.id}" does not match path id "${req.params.id}".`
+        })
+        return
+      }
+      const existing = await dbService.getContribution(
+        req.body.id ?? req.params.id
+      )
       if (!existing) {
         res.status(404).json({ error: "Contribution not found" })
         return
       }
-      let updatedContribution: ContributionEntity = {
-        ...existing,
-        status,
-        decisionComments: decisionComments?.toString()
+      const identity = getAuthorIdentity(req)
+      // A comment is absent, or it is supplied — including as null, which asks
+      // for the existing one to go. The two differ: absent leaves a repeated
+      // request with nothing to do, while an explicit null is a change.
+      const commentSupplied = decisionComments !== undefined
+      const suppliedComment = !commentSupplied
+        ? undefined
+        : decisionComments === null
+          ? null
+          : String(decisionComments)
+
+      const verdict = decideStatusChange({
+        isEditor: hasEditorRole((req as any).user?.app_metadata),
+        isAuthor:
+          !!identity &&
+          authorIdentity(existing.changeSet?.author ?? "") === identity,
+        from: existing.status,
+        to: status,
+        commentSupplied
+      })
+      if (verdict.kind === "refuse") {
+        res.status(verdict.status).json({
+          error: verdict.error,
+          ...(verdict.details ? { details: verdict.details } : {})
+        })
+        return
       }
-      updatedContribution =
-        await dbService.createContribution(updatedContribution)
+      if (verdict.kind === "noop") {
+        res.json(existing)
+        return
+      }
+
+      // A comment explains one decision, so it does not outlive it: moving to
+      // a different status without supplying a new one clears it. Carrying it
+      // over would show the reason a contribution was rejected as though it
+      // were the note on its acceptance, or on the resubmission that followed.
+      const updatedContribution = await dbService.changeContributionStatus(
+        existing.id,
+        existing.status,
+        status,
+        suppliedComment
+      )
+      if (!updatedContribution) {
+        res.status(409).json({
+          error: "Contribution status changed",
+          details:
+            "Someone else decided this contribution while you were working on it. Reload it and try again."
+        })
+        return
+      }
       res.json(updatedContribution)
     } catch (error) {
       console.error(
@@ -534,44 +763,53 @@ app.patch(
 )
 
 // Add review to contribution
-app.post("/contributions/:id/add_review", authenticateJWT, async (req, res) => {
-  try {
-    const user = (req as any).user
-    const { changeSet } = req.body
-    // Validate required fields
-    if (!changeSet) {
-      res.status(400).json({
-        error: "Invalid review data",
-        details: "changeSet is required"
+// Reviewing is an editorial act, so the role is what stands in front of it.
+// That is also what makes the author below safe to take from the request: a
+// review may be attributed to something other than a person -- the imputation
+// bot writes one -- and requiring the role means whoever pushed it onto the
+// stack was entitled to.
+app.post(
+  "/contributions/:id/add_review",
+  authenticateJWT,
+  requireEditor,
+  async (req, res) => {
+    try {
+      const { changeSet } = req.body
+      // Validate required fields
+      if (!changeSet) {
+        res.status(400).json({
+          error: "Invalid review data",
+          details: "changeSet is required"
+        })
+        return
+      }
+      // Add author and timestamp to changeSet if not provided
+      const reviewChangeSet = {
+        ...changeSet,
+        author: changeSet.author || getAuthorFromRequest(req) || "Unknown",
+        timestamp: changeSet.timestamp || Date.now()
+      }
+      const updatedContribution = await dbService.addReviewToContribution(
+        req.params.id,
+        reviewChangeSet
+      )
+      if (!updatedContribution) {
+        res.status(404).json({ error: "Contribution not found" })
+        return
+      }
+      res.status(201).json(updatedContribution)
+    } catch (error) {
+      console.error(
+        `Error adding review to contribution ${req.params.id}:`,
+        error
+      )
+      res.status(500).json({
+        error: "Failed to add review",
+        details: (error as Error).message
       })
-      return
     }
-    // Add author and timestamp to changeSet if not provided
-    const reviewChangeSet = {
-      ...changeSet,
-      author: changeSet.author || user?.name || user?.email || "Unknown",
-      timestamp: changeSet.timestamp || Date.now()
-    }
-    const updatedContribution = await dbService.addReviewToContribution(
-      req.params.id,
-      reviewChangeSet
-    )
-    if (!updatedContribution) {
-      res.status(404).json({ error: "Contribution not found" })
-      return
-    }
-    res.status(201).json(updatedContribution)
-  } catch (error) {
-    console.error(
-      `Error adding review to contribution ${req.params.id}:`,
-      error
-    )
-    res.status(500).json({
-      error: "Failed to add review",
-      details: (error as Error).message
-    })
   }
-})
+)
 
 // Upload media for contribution
 app.post(
@@ -598,6 +836,18 @@ app.post(
         res.status(400).json({
           error: "Missing required fields",
           details: "Name is required"
+        })
+        return
+      }
+      const contribution = await dbService.getContribution(contributionId)
+      if (!mayActOnContribution(req, contribution)) {
+        await fs.unlink(uploadedFile.path).catch(() => {})
+        if (!contribution) {
+          res.status(404).json({ error: "Contribution not found" })
+          return
+        }
+        res.status(403).json({
+          error: "You cannot attach media to contributions made by others"
         })
         return
       }
@@ -681,6 +931,12 @@ app.delete("/media/:mediaId", authenticateJWT, async (req, res) => {
       res.status(404).json({ error: "Media not found" })
       return
     }
+    if (!mayActOnContribution(req, media.contribution)) {
+      res.status(403).json({
+        error: "You cannot remove media from contributions made by others"
+      })
+      return
+    }
     // Delete the file from disk
     const filePath = path.join(uploadDir, media.file)
     try {
@@ -709,7 +965,7 @@ app.delete("/media/:mediaId", authenticateJWT, async (req, res) => {
 })
 
 // Create publication batch
-app.post("/create_batch", authenticateJWT, async (req, res) => {
+app.post("/create_batch", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { title, comments } = req.body
     // Validate required fields
@@ -744,7 +1000,7 @@ app.post("/create_batch", authenticateJWT, async (req, res) => {
 })
 
 // Edit publication batch (rename and/or update comments)
-app.patch("/edit_batch", authenticateJWT, async (req, res) => {
+app.patch("/edit_batch", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { id, title, comments } = req.body
     if (id === undefined) {
@@ -808,7 +1064,7 @@ app.patch("/edit_batch", authenticateJWT, async (req, res) => {
   }
 })
 
-app.delete("/batches/:id", authenticateJWT, async (req, res) => {
+app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
   // Delete batch only if no contributions are assigned to it.
   try {
     const batchId = parseInt(req.params.id)
@@ -846,7 +1102,7 @@ app.delete("/batches/:id", authenticateJWT, async (req, res) => {
 })
 
 // Assign contribution to batch
-app.patch("/assign_to_batch", authenticateJWT, async (req, res) => {
+app.patch("/assign_to_batch", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { contribution_id, batch_id } = req.body
     // Validate required fields
@@ -882,7 +1138,9 @@ app.patch("/assign_to_batch", authenticateJWT, async (req, res) => {
 })
 
 // Get batches by status
-app.get("/batches/:filter", authenticateJWT, async (req, res) => {
+// A batch carries its contributions and their change sets, so listing one
+// reads everybody's work. Editorial, like the rest of the batch routes.
+app.get("/batches/:filter", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const filter = req.params.filter
     // Validate filter parameter
@@ -914,7 +1172,7 @@ app.get("/batches/:filter", authenticateJWT, async (req, res) => {
 })
 
 // Publish contributions or batches
-app.post("/publish", authenticateJWT, async (req, res) => {
+app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { id, mode } = req.body
     // Validate required fields
@@ -1048,7 +1306,7 @@ app.post("/publish", authenticateJWT, async (req, res) => {
 })
 
 // Poll publication status
-app.post("/publish_poll/:pub_id", authenticateJWT, async (req, res) => {
+app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { pub_id } = req.params
     const pubRes = await fetch(
