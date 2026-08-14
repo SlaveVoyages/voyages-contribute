@@ -16,6 +16,7 @@ import {
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
+import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import {
   ChangeSet,
   PublicationBatch,
@@ -150,10 +151,13 @@ export class ContributionEntity implements Contribution {
 // Database connection
 
 const DB_TYPE = process.env.CONTRIB_DB_TYPE || "sqlite"
-const IS_DEVELOPMENT = process.env.NODE_ENV === "development"
 
 const sharedOptions = {
-  synchronize: IS_DEVELOPMENT,
+  // Schemas come from migrations in every environment, so that the one the
+  // server runs against is the one the migrations produce. Run them with
+  // `npm run tools -- migrate`.
+  synchronize: false,
+  migrationsRun: false,
   logging: true,
   entities: [
     ChangeSetEntity,
@@ -163,7 +167,7 @@ const sharedOptions = {
     ContributionEntity
   ],
   subscribers: [],
-  migrations: []
+  migrations: AllMigrations
 }
 
 const parsePort = (raw: string | undefined): number => {

@@ -13,6 +13,74 @@ Node.js, to support storing and retrieving the contributions.
 live database connection and might fail if you do not have that setup in the
 local environment.
 
+## Database schema
+
+The server does not create or alter its own schema, so a database has to be
+migrated before it will serve. Applying migrations is idempotent, so this is
+safe to run on every deploy.
+
+### `MIGRATION_MODE`
+
+What a starting server does about a schema that is behind the code. It is
+deliberately independent of `NODE_ENV`: how a deployment gets its schema is a
+separate decision from what the deployment is called.
+
+| value | on startup | for |
+|---|---|---|
+| `none` (default) | refuses to serve, listing what is pending | a live service — nothing writes to the schema |
+| `on-startup` | applies what is pending, then serves | local development, and single-instance deployments |
+| `job` | applies what is pending and exits without serving | production migrations, as a one-shot container |
+
+Unset or empty means `none`. An unrecognized value is refused before the
+database is even opened, so a typo cannot silently select a writing mode.
+
+`job` runs the ordinary server image, so a production migration needs no
+separate build or bundle:
+
+```
+docker run --rm -e MIGRATION_MODE=job -v <volume>:/etc/data <image>
+```
+
+Stop the service first. SQLite tolerates one writer, so migrating underneath a
+running server is not safe.
+
+A mode that applies migrations takes a deployment from nothing to a working
+database, creating one if there is none — so `job` on an empty volume is all a
+first deployment needs. `none` never creates anything and so needs no
+privilege to.
+
+Whether the database was found or created is logged either way, because a
+mistyped `CONTRIB_DB_PATH` or `CONTRIB_DB_NAME` yields a new empty database
+rather than an error, and that log line is what tells the two apart.
+
+### By hand, or in CI
+
+```
+npm run tools -- migrate           # apply anything pending
+npm run tools -- migrate --status  # what is applied, what is not
+npm run tools -- migrate --check   # exit 1 if anything is pending
+```
+
+`--check` is the one for CI: it fails when the schema is behind the code,
+rather than leaving it to surface at runtime. Neither it nor `--status`
+creates a database, since a reporting command should not.
+
+Migrating a database built by an older version of this server, when
+`synchronize` still created the schema, records the initial migration without
+touching the existing tables.
+
+### Adding a migration
+
+Migrations live in `src/backend/migrations` and are listed in `AllMigrations`,
+which the `DataSource` reads — a filesystem glob would not survive bundling.
+
+Write them against the schema-builder API (`queryRunner.createTable`,
+`addColumn`, …) rather than raw SQL. The same migrations run on both SQLite and
+MySQL, and TypeORM renders each dialect's DDL from those definitions; raw SQL
+would need one set per dialect. Bear in mind the dialects disagree on more than
+syntax — SQLite only accepts `AUTOINCREMENT` on a column typed exactly
+`INTEGER`, for instance.
+
 ## Running the server
 
 npm run build-server && node ./output/server/server.js
