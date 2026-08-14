@@ -92,6 +92,63 @@ test("the root filter finds an entity however its ref was serialized", async () 
   expect(await idsMatching({ rootId: 500002, rootSchema: "%" })).toEqual([])
 })
 
+test("an author is found by address, whatever name is recorded beside it", async () => {
+  const { authorIdentity } = await import("../src/backend/authz")
+
+  // The address is the identity; the name is only there to be read. The last
+  // bracketed group wins, so a name cannot pass itself off as the address.
+  expect(authorIdentity("Jane Doe <j@x.com>")).toBe("j@x.com")
+  expect(authorIdentity("j@x.com")).toBe("j@x.com")
+  expect(authorIdentity("  J@X.com  ")).toBe("j@x.com")
+  expect(authorIdentity("Evil <victim@x.com> <attacker@x.com>")).toBe(
+    "attacker@x.com"
+  )
+
+  // Three records for one person: created before names were recorded, after,
+  // and after they corrected their name. All three are theirs.
+  const stored = [
+    "j@x.com",
+    "Jane Doe <j@x.com>",
+    "Jane Q. Doe <j@x.com>",
+    "Someone Else <other@x.com>"
+  ]
+  for (const [index, authorValue] of stored.entries()) {
+    const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+      author: authorValue,
+      title: "t",
+      comments: "",
+      timestamp: 0,
+      changes: []
+    })
+    await AppDataSource.manager.save(ContributionEntity, {
+      id: `author-${index}`,
+      root: { type: "existing", schema: "Voyage", id: 900000 + index },
+      changeSet,
+      status: ContributionStatus.WorkInProgress
+    } as ContributionEntity)
+  }
+
+  const mine = await service.listContributions({
+    author: "Jane Q. Doe <j@x.com>",
+    limit: 100
+  })
+  expect(mine.data.map((c) => c.id).sort()).toEqual([
+    "author-0",
+    "author-1",
+    "author-2"
+  ])
+
+  // Someone else's work stays theirs, and a wildcard does not collect it.
+  const theirs = await service.listContributions({
+    author: "other@x.com",
+    limit: 100
+  })
+  expect(theirs.data.map((c) => c.id)).toEqual(["author-3"])
+  expect(
+    (await service.listContributions({ author: "%", limit: 100 })).data
+  ).toEqual([])
+})
+
 test("a contribution is never fetched without an id", async () => {
   // TypeORM drops an undefined condition, turning "this contribution" into
   // "any contribution", which callers then write to.

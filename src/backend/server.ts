@@ -32,7 +32,7 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
-import { hasEditorRole, requireEditor } from "./authz"
+import { authorIdentity, hasEditorRole, requireEditor } from "./authz"
 
 // Load environment variables
 dotenv.config()
@@ -398,24 +398,46 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
 })
 
 /**
- * Who a request is from, for attribution and for the author check that gates
- * submitting a contribution.
+ * The verified identity of the requester, which every authorization check
+ * compares.
  *
- * Only claims the token carries are considered. A display name lives in
- * `user_metadata`, which the account holder edits at will, so identifying by
- * name would let one account claim another's work by copying its name. The
- * subject stands in when a token carries no email, so an account without one
- * still has an identity rather than none.
+ * Only claims the token carries are considered, and the address is preferred:
+ * a display name lives in `user_metadata`, which the account holder edits at
+ * will, so identifying by name would let one account claim another's work by
+ * copying its name. The subject stands in for a token carrying no email, so
+ * such an account still has an identity rather than none.
  */
-const getAuthorFromRequest = (req: Request): string | null => {
+const getAuthorIdentity = (req: Request): string | null => {
   const user = (req as any).user
   if (!user || typeof user !== "object") {
     return null
   }
   const claim = [user.email, user.id].find(
-    (value) => typeof value === "string" && value.length > 0
+    (value) => typeof value === "string" && value.trim().length > 0
   )
-  return claim ?? null
+  return claim ? claim.trim().toLowerCase() : null
+}
+
+/**
+ * How a request's author is recorded: `Jane Doe <doe.j@example.com>`, or the
+ * address alone when the account has no name to show.
+ *
+ * The name makes a contribution legible to the next reader; the address is the
+ * part that means anything, and the only part compared. Brackets are stripped
+ * from the name so the address at the end stays unambiguous.
+ */
+const getAuthorFromRequest = (req: Request): string | null => {
+  const identity = getAuthorIdentity(req)
+  if (!identity) {
+    return null
+  }
+  const { firstName, lastName } = (req as any).user?.metadata ?? {}
+  const name = [firstName, lastName]
+    .filter((part) => typeof part === "string")
+    .join(" ")
+    .replace(/[<>]/g, "")
+    .trim()
+  return name ? `${name} <${identity}>` : identity
 }
 
 app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
@@ -433,7 +455,7 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
       res.status(404).json({ error: "Contribution not found" })
       return
     }
-    if (existing.changeSet.author !== author) {
+    if (authorIdentity(existing.changeSet.author) !== getAuthorIdentity(req)) {
       res
         .status(403)
         .json({ error: "You cannot delete contributions made by others" })
@@ -466,7 +488,10 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
       ? await dbService.getContribution(req.body.id)
       : null
     // If existing it must match the user.
-    if (existing && existing.changeSet?.author !== author) {
+    if (
+      existing &&
+      authorIdentity(existing.changeSet?.author ?? "") !== getAuthorIdentity(req)
+    ) {
       res
         .status(403)
         .json({ error: "You cannot modify contributions made by others" })
@@ -574,8 +599,11 @@ app.patch(
           })
           return
         }
-        const author = getAuthorFromRequest(req)
-        if (!author || existing.changeSet?.author !== author) {
+        const identity = getAuthorIdentity(req)
+        if (
+          !identity ||
+          authorIdentity(existing.changeSet?.author ?? "") !== identity
+        ) {
           res.status(403).json({
             error: "You cannot submit contributions made by others"
           })

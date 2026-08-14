@@ -17,6 +17,7 @@ import {
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
+import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import {
   ChangeSet,
@@ -351,12 +352,27 @@ export class DatabaseService {
       }
     }
     
+    // An author reads `Name <address>`, and the name is editable, so matching
+    // the whole string would hide a contributor's own work from them the first
+    // time they corrected their profile. Only the address is matched, and the
+    // bare form the older records hold still matches itself.
+    // An author reads `Name <address>`, and the name is editable, so matching
+    // the whole string would hide a contributor's own work from them the first
+    // time they corrected their profile. Only the address is matched, and the
+    // bare form the older records hold still matches itself.
     if (author) {
-      where.changeSet = { author }
-    }
-
-    if (options.author) {
-      where.changeSet = { author: options.author }
+      const identity = likeLiteral(authorIdentity(author))
+      where.changeSet = {
+        author: Raw(
+          (column) =>
+            `(LOWER(${column}) = :authorIdentity` +
+            ` OR LOWER(${column}) LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
+          {
+            authorIdentity: authorIdentity(author),
+            authorSuffix: `%<${identity}>`
+          }
+        )
+      }
     }
 
     // `root` is a simple-json column, so it is matched as text. This lets a
