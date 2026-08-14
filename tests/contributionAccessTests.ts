@@ -184,8 +184,19 @@ test("a status change only lands on the status it was decided against", async ()
     "looks right"
   )
 
-  // Comments are dropped when the contribution leaves the decision they
-  // explain, so a resubmission does not carry the old verdict with it.
+  // An editor correcting the note leaves the status where it is.
+  const corrected = await service.changeContributionStatus(
+    "a",
+    ContributionStatus.Accepted,
+    ContributionStatus.Accepted,
+    "looks right, sources checked"
+  )
+  expect(corrected?.status).toBe(ContributionStatus.Accepted)
+  expect(corrected?.decisionComments).toBe("looks right, sources checked")
+
+  // A comment explains one decision and does not outlive it, so moving on
+  // without a new one leaves nothing behind to be read as a verdict on the
+  // status that follows.
   const cleared = await service.changeContributionStatus(
     "a",
     ContributionStatus.Accepted,

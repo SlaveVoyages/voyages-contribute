@@ -294,15 +294,28 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     // Lets a client ask whether one entity already has a contribution, rather
     // than paging the whole table to find out. The schema narrows it, since
     // ids are only unique within one.
-    const rootId =
-      typeof req.query.root_id === "string" && req.query.root_id.length > 0
-        ? req.query.root_id
-        : undefined
-    const rootSchema =
-      typeof req.query.root_schema === "string" &&
-      req.query.root_schema.length > 0
-        ? req.query.root_schema
-        : undefined
+    //
+    // A filter that cannot be read is refused rather than dropped: a repeated
+    // `?root_id=` arrives as an array, and silently ignoring it would answer
+    // "does this entity have a contribution?" with the whole table, which
+    // reads as yes for everything.
+    const readFilter = (name: string): string | undefined | null => {
+      const raw = req.query[name]
+      if (raw === undefined) {
+        return undefined
+      }
+      return typeof raw === "string" && raw.length > 0 ? raw : null
+    }
+    const rootId = readFilter("root_id")
+    const rootSchema = readFilter("root_schema")
+    if (rootId === null || rootSchema === null) {
+      res.status(400).json({
+        error: "Invalid filter",
+        details:
+          "root_id and root_schema each take a single non-empty value."
+      })
+      return
+    }
 
     const result = await dbService.listContributions({
       ...getPaginationArgs(req),
@@ -570,11 +583,14 @@ app.patch(
       // itself is limited to the contribution's author.
       const user = (req as any).user
       const isEditor = hasEditorRole(user?.app_metadata)
-      // A repeated request asks for a state the contribution is already in, so
-      // it has nothing to refuse. Without this a client whose response was lost
-      // in transit retries a submission that went through and is told it lacks
-      // permission for it.
-      if (existing.status === status) {
+      const suppliedComment =
+        decisionComments === undefined ? undefined : decisionComments?.toString()
+      // A request for the state a contribution is already in, carrying nothing
+      // else, has nothing to do and nothing to refuse. Without this a client
+      // whose response was lost in transit retries a submission that went
+      // through and is told it lacks permission for it. A request that also
+      // carries a comment is a correction to that comment, so it goes on.
+      if (existing.status === status && suppliedComment === undefined) {
         res.json(existing)
         return
       }
@@ -591,10 +607,12 @@ app.patch(
         // from one. Without this an author could walk their own decided
         // contribution back to Submitted, and a published one has already
         // been applied upstream.
-        if (
-          existing.status !== ContributionStatus.WorkInProgress &&
-          existing.status !== ContributionStatus.Rejected
-        ) {
+        //
+        // A rejected contribution is not a draft: its content can no longer be
+        // edited, so resubmitting it could only put the same thing back in the
+        // queue. Reopening one is an editorial act until there is a way to
+        // revise it.
+        if (existing.status !== ContributionStatus.WorkInProgress) {
           res.status(403).json({
             error: "Editor role required",
             details:
@@ -613,23 +631,15 @@ app.patch(
           return
         }
       }
-      // Comments belong to the decision that produced them: they are replaced
-      // when the request carries some, kept when it does not, and dropped when
-      // the contribution leaves the decision they explain. Otherwise a
-      // resubmitted contribution reaches the editor queue still showing why it
-      // was rejected, which reads as a verdict on the new submission.
-      const decisionComment =
-        decisionComments !== undefined
-          ? decisionComments?.toString()
-          : status === ContributionStatus.Submitted
-            ? undefined
-            : existing.decisionComments
-
+      // A comment explains one decision, so it does not outlive it: moving to
+      // a different status without supplying a new one clears it. Carrying it
+      // over would show the reason a contribution was rejected as though it
+      // were the note on its acceptance, or on the resubmission that followed.
       const updatedContribution = await dbService.changeContributionStatus(
         existing.id,
         existing.status,
         status,
-        decisionComment
+        suppliedComment
       )
       if (!updatedContribution) {
         res.status(409).json({
