@@ -4,7 +4,13 @@ import express, {
   NextFunction,
   ErrorRequestHandler
 } from "express"
-import { initDatabase, DatabaseService, ContributionEntity } from "./db"
+import {
+  initDatabase,
+  DatabaseService,
+  ContributionEntity,
+  AppDataSource
+} from "./db"
+import { prepareSchema, readMigrationMode } from "./schema"
 import { jwtVerify, createRemoteJWKSet } from "jose"
 import dotenv from "dotenv"
 import cors from "cors"
@@ -1182,9 +1188,20 @@ const errorHandler: ErrorRequestHandler = (
 // Start the server
 export const startServer = async () => {
   try {
+    // Read the mode before connecting, so a typo fails immediately rather
+    // than after the database is open.
+    const migrationMode = readMigrationMode(process.env.MIGRATION_MODE)
+
     // Initialize database
     await initDatabase()
     console.log("Database initialized")
+
+    if ((await prepareSchema(migrationMode)) === "done") {
+      // `job` mode: migrating is the whole task. Closing the connection lets
+      // the process end on its own, so the exit code is the outcome.
+      await AppDataSource.destroy()
+      return
+    }
 
     // Create database service
     dbService = new DatabaseService()

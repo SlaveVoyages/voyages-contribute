@@ -23,6 +23,10 @@ ENV MEDIA_UPLOAD_FOLDER=/etc/data/uploads
 ENV NODE_ENV=production
 ENV PORT=3000
 
+# Refuse to serve a schema that is behind the code. Run the same image with
+# MIGRATION_MODE=job to apply migrations and exit.
+ENV MIGRATION_MODE=none
+
 # Set working directory
 WORKDIR /usr/src/app
 

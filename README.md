@@ -17,7 +17,34 @@ local environment.
 
 The server does not create or alter its own schema, so a database has to be
 migrated before it will serve. Applying migrations is idempotent, so this is
-safe to run on every deploy:
+safe to run on every deploy.
+
+### `MIGRATION_MODE`
+
+What a starting server does about a schema that is behind the code. It is
+deliberately independent of `NODE_ENV`: how a deployment gets its schema is a
+separate decision from what the deployment is called.
+
+| value | on startup | for |
+|---|---|---|
+| `none` (default) | refuses to serve, listing what is pending | a live service — nothing writes to the schema |
+| `on-startup` | applies what is pending, then serves | local development, and single-instance deployments |
+| `job` | applies what is pending and exits without serving | production migrations, as a one-shot container |
+
+Unset or empty means `none`. An unrecognized value is refused before the
+database is even opened, so a typo cannot silently select a writing mode.
+
+`job` runs the ordinary server image, so a production migration needs no
+separate build or bundle:
+
+```
+docker run --rm -e MIGRATION_MODE=job -v <volume>:/etc/data <image>
+```
+
+Stop the service first. SQLite tolerates one writer, so migrating underneath a
+running server is not safe.
+
+### By hand, or in CI
 
 ```
 npm run tools -- migrate                    # apply anything pending
@@ -29,14 +56,14 @@ npm run tools -- migrate --create-database  # MySQL only, see below
 `--check` is the one for CI: it fails when the schema is behind the code,
 rather than leaving it to surface at runtime.
 
-SQLite creates its file on connect, so `migrate` alone is enough to go from
+SQLite creates its file on connect, so migrating alone is enough to go from
 nothing to a working database. MySQL will not connect to a database that does
 not exist and TypeORM will not create one, so a first run there needs
-`--create-database`.
+`--create-database`, which `job` mode does not do for itself.
 
-Running `migrate` against a database built by an older version of this server,
-when `synchronize` still created the schema, records the initial migration
-without touching the existing tables.
+Migrating a database built by an older version of this server, when
+`synchronize` still created the schema, records the initial migration without
+touching the existing tables.
 
 ### Adding a migration
 
