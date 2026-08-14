@@ -26,7 +26,10 @@ dist-ssr
 # Database files
 
 *.sqlite
+*.sqlite3
 *.db
+# Anchored, so it does not also swallow tests/data.
+/data/
 
 # SSL certificates
 *.pem

@@ -223,14 +223,35 @@ export const AppDataSource = createDataSource()
 
 const contribAllRelations = ["changeSet", "reviews", "reviews.changeSet", "media", "batch"]
 
+/**
+ * Sqlite has no default LIKE escape character and MySQL's is the backslash,
+ * which is also a string escape there. Naming one explicitly means the same
+ * pattern behaves the same on both.
+ */
+const LIKE_ESCAPE = "!"
+
+/**
+ * Makes a caller-supplied value match itself inside a LIKE pattern. Binding it
+ * as a parameter stops it reaching the SQL as syntax, but not as wildcards: an
+ * unescaped `%` would otherwise widen the search to every row.
+ */
+const likeLiteral = (value: string): string =>
+  value.replace(/[!%_]/g, (char) => `${LIKE_ESCAPE}${char}`)
+
 const getFullContribution = (
   manager: EntityManager,
   id: string
 ): Promise<ContributionEntity | null> =>
-  manager.findOne(ContributionEntity, {
-    where: { id },
-    relations: contribAllRelations
-  })
+  // An absent id has to be refused here rather than passed on: TypeORM drops
+  // an undefined condition from the where clause, so the query becomes
+  // "any contribution" and returns an arbitrary one. Callers read that as the
+  // record they asked for and write to it.
+  id
+    ? manager.findOne(ContributionEntity, {
+        where: { id },
+        relations: contribAllRelations
+      })
+    : Promise.resolve(null)
 
 // Initialize repositories
 export class DatabaseService {
@@ -287,6 +308,8 @@ export class DatabaseService {
       author?: string
       /** Id of the root entity, e.g. a voyage id. */
       rootId?: string | number
+      /** Schema of the root entity, within which its id is unique. */
+      rootSchema?: string
       sortBy?: "author" | "timestamp" | "id"
       sortOrder?: "ASC" | "DESC"
     } = {}
@@ -303,6 +326,7 @@ export class DatabaseService {
       batchId,
       author,
       rootId,
+      rootSchema,
       sortBy = "id",
       sortOrder = "ASC"
     } = options
@@ -337,17 +361,52 @@ export class DatabaseService {
 
     // `root` is a simple-json column, so it is matched as text. This lets a
     // caller ask whether one entity already has a contribution instead of
-    // paging the whole table and filtering client side. Both spellings are
-    // matched because most rows serialise the id as a string while a few hold
-    // it as a number.
-    if (rootId !== undefined) {
-      const id = String(rootId)
+    // paging the whole table and filtering client side.
+    //
+    // Four patterns because two things vary independently and neither is ours
+    // to fix from here: an id may be serialised as a string or a number, and
+    // JSON.stringify emits keys in the order the object happened to be built,
+    // so `id` may be followed by a comma or by the closing brace.
+    //
+    // Ids are only unique within a schema, so `rootSchema` narrows the match:
+    // without it a voyage id also matches a contribution rooted at another
+    // entity that happens to share the number. Both conditions have to go in
+    // one `Raw`, since a where clause holds a single condition per column.
+    if (rootId !== undefined || rootSchema !== undefined) {
+      const clauses: string[] = []
+      const parameters: Record<string, string> = {}
+
+      if (rootId !== undefined) {
+        const id = likeLiteral(String(rootId))
+        Object.assign(parameters, {
+          rootIdTextComma: `%"id":"${id}",%`,
+          rootIdTextEnd: `%"id":"${id}"}%`,
+          rootIdNumComma: `%"id":${id},%`,
+          rootIdNumEnd: `%"id":${id}}%`
+        })
+        clauses.push(
+          "(" +
+            [
+              "rootIdTextComma",
+              "rootIdTextEnd",
+              "rootIdNumComma",
+              "rootIdNumEnd"
+            ]
+              .map((name) => `COLUMN LIKE :${name} ESCAPE '${LIKE_ESCAPE}'`)
+              .join(" OR ") +
+            ")"
+        )
+      }
+
+      if (rootSchema !== undefined) {
+        parameters.rootSchema = `%"schema":"${likeLiteral(rootSchema)}"%`
+        clauses.push(`COLUMN LIKE :rootSchema ESCAPE '${LIKE_ESCAPE}'`)
+      }
+
+      const sql = clauses.join(" AND ")
       where.root = Raw(
-        (column) => `(${column} LIKE :rootIdText OR ${column} LIKE :rootIdNum)`,
-        {
-          rootIdText: `%"id":"${id}"%`,
-          rootIdNum: `%"id":${id},%`
-        }
+        (column) => sql.replace(/COLUMN/g, column),
+        parameters
       )
     }
 

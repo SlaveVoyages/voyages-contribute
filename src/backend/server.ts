@@ -32,7 +32,7 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
-import { hasEditorRole } from "./authz"
+import { hasEditorRole, requireEditor } from "./authz"
 
 // Load environment variables
 dotenv.config()
@@ -297,38 +297,52 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     }
 
     // Lets a client ask whether one entity already has a contribution, rather
-    // than paging the whole table to find out.
+    // than paging the whole table to find out. The schema narrows it, since
+    // ids are only unique within one.
     const rootId =
       typeof req.query.root_id === "string" && req.query.root_id.length > 0
         ? req.query.root_id
+        : undefined
+    const rootSchema =
+      typeof req.query.root_schema === "string" &&
+      req.query.root_schema.length > 0
+        ? req.query.root_schema
         : undefined
 
     const result = await dbService.listContributions({
       ...getPaginationArgs(req),
       status,
       batchId,
-      rootId
+      rootId,
+      rootSchema
     })
 
     // Add pagination links to the response
     const baseUrl = `${req.protocol}://${req.get("host")}${req.baseUrl}${req.path}`
     const totalPages = Math.ceil(result.total / result.limit)
 
+    // Carry every filter into the links, so a page beyond the first describes
+    // the same set as the totals reported alongside it.
+    const filters = Object.entries(req.query)
+      .filter(([key]) => key !== "page" && key !== "limit")
+      .flatMap(([key, value]) =>
+        (Array.isArray(value) ? value : [value]).map(
+          (one) => `&${encodeURIComponent(key)}=${encodeURIComponent(String(one))}`
+        )
+      )
+      .join("")
+    const pageUrl = (page: number) =>
+      `${baseUrl}?page=${page}&limit=${result.limit}${filters}`
+
     const response = {
       ...result,
       totalPages,
       links: {
-        self: `${baseUrl}?page=${result.page}&limit=${result.limit}`,
-        first: `${baseUrl}?page=1&limit=${result.limit}`,
-        last: `${baseUrl}?page=${totalPages}&limit=${result.limit}`,
-        next:
-          result.page < totalPages
-            ? `${baseUrl}?page=${result.page + 1}&limit=${result.limit}`
-            : null,
-        prev:
-          result.page > 1
-            ? `${baseUrl}?page=${result.page - 1}&limit=${result.limit}`
-            : null
+        self: pageUrl(result.page),
+        first: pageUrl(1),
+        last: pageUrl(totalPages),
+        next: result.page < totalPages ? pageUrl(result.page + 1) : null,
+        prev: result.page > 1 ? pageUrl(result.page - 1) : null
       }
     }
 
@@ -383,29 +397,25 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
   }
 })
 
+/**
+ * Who a request is from, for attribution and for the author check that gates
+ * submitting a contribution.
+ *
+ * Only claims the token carries are considered. A display name lives in
+ * `user_metadata`, which the account holder edits at will, so identifying by
+ * name would let one account claim another's work by copying its name. The
+ * subject stands in when a token carries no email, so an account without one
+ * still has an identity rather than none.
+ */
 const getAuthorFromRequest = (req: Request): string | null => {
   const user = (req as any).user
-
-  if (!user) {
+  if (!user || typeof user !== "object") {
     return null
   }
-
-  // For Supabase tokens, user will have id, email, and metadata
-  if (typeof user === "object" && user.metadata) {
-    const { firstName, lastName } = user.metadata
-    if (firstName && lastName) {
-      return `${firstName} ${lastName}`
-    }
-    if (firstName) {
-      return firstName
-    }
-  }
-
-  // Author identity must come from the verified token only; never trust
-  // client-supplied values like req.body.changeSet.author for authorization.
-  const author = user?.email || user?.username || user?.name
-
-  return author || null
+  const claim = [user.email, user.id].find(
+    (value) => typeof value === "string" && value.length > 0
+  )
+  return claim ?? null
 }
 
 app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
@@ -549,7 +559,23 @@ app.patch(
           })
           return
         }
-        if (existing.changeSet?.author !== getAuthorFromRequest(req)) {
+        // Submitting is a step forward from a draft, so it is only offered
+        // from one. Without this an author could walk their own decided
+        // contribution back to Submitted, and a published one has already
+        // been applied upstream.
+        if (
+          existing.status !== ContributionStatus.WorkInProgress &&
+          existing.status !== ContributionStatus.Rejected
+        ) {
+          res.status(403).json({
+            error: "Editor role required",
+            details:
+              "Only an editor can change the status of a contribution that has already been decided."
+          })
+          return
+        }
+        const author = getAuthorFromRequest(req)
+        if (!author || existing.changeSet?.author !== author) {
           res.status(403).json({
             error: "You cannot submit contributions made by others"
           })
@@ -559,7 +585,12 @@ app.patch(
       let updatedContribution: ContributionEntity = {
         ...existing,
         status,
-        decisionComments: decisionComments?.toString()
+        // Only replace the comments when the request carries some. Sending a
+        // bare {status} would otherwise erase the reason an editor recorded
+        // for the previous decision.
+        ...(decisionComments === undefined
+          ? {}
+          : { decisionComments: decisionComments?.toString() })
       }
       updatedContribution =
         await dbService.createContribution(updatedContribution)
@@ -753,7 +784,7 @@ app.delete("/media/:mediaId", authenticateJWT, async (req, res) => {
 })
 
 // Create publication batch
-app.post("/create_batch", authenticateJWT, async (req, res) => {
+app.post("/create_batch", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { title, comments } = req.body
     // Validate required fields
@@ -788,7 +819,7 @@ app.post("/create_batch", authenticateJWT, async (req, res) => {
 })
 
 // Edit publication batch (rename and/or update comments)
-app.patch("/edit_batch", authenticateJWT, async (req, res) => {
+app.patch("/edit_batch", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { id, title, comments } = req.body
     if (id === undefined) {
@@ -852,7 +883,7 @@ app.patch("/edit_batch", authenticateJWT, async (req, res) => {
   }
 })
 
-app.delete("/batches/:id", authenticateJWT, async (req, res) => {
+app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
   // Delete batch only if no contributions are assigned to it.
   try {
     const batchId = parseInt(req.params.id)
@@ -890,7 +921,7 @@ app.delete("/batches/:id", authenticateJWT, async (req, res) => {
 })
 
 // Assign contribution to batch
-app.patch("/assign_to_batch", authenticateJWT, async (req, res) => {
+app.patch("/assign_to_batch", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { contribution_id, batch_id } = req.body
     // Validate required fields
@@ -958,7 +989,7 @@ app.get("/batches/:filter", authenticateJWT, async (req, res) => {
 })
 
 // Publish contributions or batches
-app.post("/publish", authenticateJWT, async (req, res) => {
+app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { id, mode } = req.body
     // Validate required fields
@@ -1092,7 +1123,7 @@ app.post("/publish", authenticateJWT, async (req, res) => {
 })
 
 // Poll publication status
-app.post("/publish_poll/:pub_id", authenticateJWT, async (req, res) => {
+app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, res) => {
   try {
     const { pub_id } = req.params
     const pubRes = await fetch(
