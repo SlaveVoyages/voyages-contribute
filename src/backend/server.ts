@@ -325,6 +325,20 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       rootSchema
     })
 
+    // Any contributor may ask what is already being worked on — that is how a
+    // form finds out a voyage is taken before offering to edit it. The work
+    // itself is not theirs to read, so without the editorial role an entry
+    // says that it exists and what it is about, and nothing more. Reading
+    // one's own is what /contributions/wip is for.
+    const isEditor = hasEditorRole((req as any).user?.app_metadata)
+    const data = isEditor
+      ? result.data
+      : result.data.map(({ id, root, status: entryStatus }) => ({
+          id,
+          root,
+          status: entryStatus
+        }))
+
     // Add pagination links to the response
     const baseUrl = `${req.protocol}://${req.get("host")}${req.baseUrl}${req.path}`
     const totalPages = Math.ceil(result.total / result.limit)
@@ -344,6 +358,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
 
     const response = {
       ...result,
+      data,
       totalPages,
       links: {
         self: pageUrl(result.page),
@@ -395,6 +410,19 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
 
     if (!contribution) {
       res.status(404).json({ error: "Contribution not found" })
+      return
+    }
+
+    // A contribution is someone's unpublished work, so reading one whole is
+    // for its author and for editors.
+    if (
+      !hasEditorRole((req as any).user?.app_metadata) &&
+      authorIdentity(contribution.changeSet?.author ?? "") !==
+        getAuthorIdentity(req)
+    ) {
+      res
+        .status(403)
+        .json({ error: "You cannot read contributions made by others" })
       return
     }
 
