@@ -194,6 +194,33 @@ test("a status change only lands on the status it was decided against", async ()
   expect(corrected?.status).toBe(ContributionStatus.Accepted)
   expect(corrected?.decisionComments).toBe("looks right, sources checked")
 
+  // The same request again writes nothing and is still a success: what the
+  // caller needs to know is that the contribution says what they asked for,
+  // not how many rows a driver counted. MySQL counts rows whose values
+  // changed, so a replay there writes nothing at all.
+  const replayed = await service.changeContributionStatus(
+    "a",
+    ContributionStatus.Accepted,
+    ContributionStatus.Accepted,
+    "looks right, sources checked"
+  )
+  expect(replayed?.decisionComments).toBe("looks right, sources checked")
+
+  // A note can be taken back without moving the contribution.
+  const withdrawn = await service.changeContributionStatus(
+    "a",
+    ContributionStatus.Accepted,
+    ContributionStatus.Accepted,
+    null
+  )
+  expect(withdrawn?.decisionComments ?? null).toBeNull()
+  await service.changeContributionStatus(
+    "a",
+    ContributionStatus.Accepted,
+    ContributionStatus.Accepted,
+    "looks right"
+  )
+
   // A comment explains one decision and does not outlive it, so moving on
   // without a new one leaves nothing behind to be read as a verdict on the
   // status that follows.

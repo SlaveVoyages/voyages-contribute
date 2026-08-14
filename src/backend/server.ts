@@ -317,27 +317,46 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       return
     }
 
+    const isEditor = hasEditorRole((req as any).user?.app_metadata)
+    const ownIdentity = getAuthorIdentity(req)
+
+    // Narrowing to one author is how a contributor lists their own work at any
+    // status, which /contributions/wip cannot do. Other people's is not theirs
+    // to enumerate, so without the editorial role the filter only ever means
+    // themselves.
+    const requestedAuthor =
+      typeof req.query.author === "string" && req.query.author.length > 0
+        ? req.query.author
+        : undefined
+    const author = isEditor
+      ? requestedAuthor
+      : requestedAuthor !== undefined
+        ? (ownIdentity ?? undefined)
+        : undefined
+
     const result = await dbService.listContributions({
       ...getPaginationArgs(req),
       status,
       batchId,
       rootId,
-      rootSchema
+      rootSchema,
+      author
     })
 
     // Any contributor may ask what is already being worked on — that is how a
-    // form finds out a voyage is taken before offering to edit it. The work
-    // itself is not theirs to read, so without the editorial role an entry
-    // says that it exists and what it is about, and nothing more. Reading
-    // one's own is what /contributions/wip is for.
-    const isEditor = hasEditorRole((req as any).user?.app_metadata)
-    const data = isEditor
-      ? result.data
-      : result.data.map(({ id, root, status: entryStatus }) => ({
-          id,
-          root,
-          status: entryStatus
-        }))
+    // form finds out a voyage is taken before offering to edit it. Someone
+    // else's work is not theirs to read, though, so an entry they did not
+    // write says that it exists and what it is about, and nothing more.
+    const data = result.data.map((contribution) =>
+      isEditor ||
+      authorIdentity(contribution.changeSet?.author ?? "") === ownIdentity
+        ? contribution
+        : {
+            id: contribution.id,
+            root: contribution.root,
+            status: contribution.status
+          }
+    )
 
     // Add pagination links to the response
     const baseUrl = `${req.protocol}://${req.get("host")}${req.baseUrl}${req.path}`
@@ -611,17 +630,42 @@ app.patch(
       // itself is limited to the contribution's author.
       const user = (req as any).user
       const isEditor = hasEditorRole(user?.app_metadata)
-      const suppliedComment =
-        decisionComments === undefined ? undefined : decisionComments?.toString()
+      // A comment is absent, or it is supplied — including as null, which asks
+      // for the existing one to go. The two differ: absent leaves a repeated
+      // request with nothing to do, while an explicit null is a change.
+      const commentSupplied = decisionComments !== undefined
+      const suppliedComment = !commentSupplied
+        ? undefined
+        : decisionComments === null
+          ? null
+          : String(decisionComments)
+
+      // Whether the caller may touch this contribution at all is settled
+      // first, before anything is returned or reported about it. Deciding one
+      // is an editorial act; submitting one's own is not.
+      if (!isEditor) {
+        const identity = getAuthorIdentity(req)
+        if (
+          !identity ||
+          authorIdentity(existing.changeSet?.author ?? "") !== identity
+        ) {
+          res.status(403).json({
+            error: "You cannot change contributions made by others"
+          })
+          return
+        }
+      }
+
       // A request for the state a contribution is already in, carrying nothing
-      // else, has nothing to do and nothing to refuse. Without this a client
-      // whose response was lost in transit retries a submission that went
-      // through and is told it lacks permission for it. A request that also
-      // carries a comment is a correction to that comment, so it goes on.
-      if (existing.status === status && suppliedComment === undefined) {
+      // else, has nothing to do. Without this a client whose response was lost
+      // in transit retries a submission that went through and is told it lacks
+      // permission for it. A request that also carries a comment is a
+      // correction to that comment, so it goes on.
+      if (existing.status === status && !commentSupplied) {
         res.json(existing)
         return
       }
+
       if (!isEditor) {
         if (status !== ContributionStatus.Submitted) {
           res.status(403).json({
@@ -645,16 +689,6 @@ app.patch(
             error: "Editor role required",
             details:
               "Only an editor can change the status of a contribution that has already been decided."
-          })
-          return
-        }
-        const identity = getAuthorIdentity(req)
-        if (
-          !identity ||
-          authorIdentity(existing.changeSet?.author ?? "") !== identity
-        ) {
-          res.status(403).json({
-            error: "You cannot submit contributions made by others"
           })
           return
         }

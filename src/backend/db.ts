@@ -466,13 +466,28 @@ export class DatabaseService {
     id: string,
     from: ContributionStatus,
     to: ContributionStatus,
-    decisionComments: string | undefined
+    decisionComments: string | null | undefined
   ): Promise<ContributionEntity | null> {
-    const result = await this.contributionRepo.update(
+    const comments = decisionComments ?? null
+    await this.contributionRepo.update(
       { id, status: from },
-      { status: to, decisionComments: decisionComments ?? null } as any
+      { status: to, decisionComments: comments } as any
     )
-    return result.affected ? this.getContribution(id) : null
+    // Read back rather than trusting the row count. MySQL reports rows whose
+    // values *changed*, so a request replayed with the values already stored
+    // is indistinguishable from one that matched nothing — and sqlite reports
+    // rows matched, so no test here can tell the two apart either. What the
+    // caller needs to know is whether the contribution now says what they
+    // asked for.
+    const current = await this.getContribution(id)
+    if (
+      !current ||
+      current.status !== to ||
+      (current.decisionComments ?? null) !== comments
+    ) {
+      return null
+    }
+    return current
   }
 
   async updateContribution(
