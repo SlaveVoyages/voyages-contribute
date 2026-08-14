@@ -1171,6 +1171,37 @@ app.get("/batches/:filter", authenticateJWT, requireEditor, async (req, res) => 
   }
 })
 
+// How each status reads when explaining why a batch has nothing to publish.
+const CONTRIBUTION_STATUS_LABELS: Record<ContributionStatus, string> = {
+  [ContributionStatus.WorkInProgress]: "still being edited",
+  [ContributionStatus.Submitted]: "awaiting an editorial decision",
+  [ContributionStatus.Accepted]: "accepted",
+  [ContributionStatus.Rejected]: "rejected",
+  [ContributionStatus.Published]: "already published"
+}
+
+// Say what a batch actually holds, so "nothing to publish" arrives with the
+// reason attached instead of leaving the editor to go and look.
+const describeBatchComposition = (
+  counts: Partial<Record<ContributionStatus, number>>
+): string => {
+  const present = Object.entries(counts).filter(([, count]) => (count ?? 0) > 0)
+  if (present.length === 0) {
+    return "The batch is empty. Assign accepted contributions to it before publishing."
+  }
+  const total = present.reduce((sum, [, count]) => sum + (count ?? 0), 0)
+  const noun = total === 1 ? "contribution" : "contributions"
+  const label = (status: string) =>
+    CONTRIBUTION_STATUS_LABELS[Number(status) as ContributionStatus]
+  // One status reads better without repeating the count either side of the
+  // colon: "holds 1 contribution, still being edited".
+  const breakdown =
+    present.length === 1
+      ? `, ${label(present[0][0])}`
+      : `: ${present.map(([status, count]) => `${count} ${label(status)}`).join(", ")}`
+  return `The batch holds ${total} ${noun}${breakdown}. Only accepted contributions can be published.`
+}
+
 // Publish contributions or batches
 app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   try {
@@ -1200,9 +1231,19 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
         id,
         ContributionStatus.Accepted
       )
-      if (!batchContributions) {
-        res.status(404).json({
-          error: "Batch not found or no Accepted contributions are in the batch"
+      // `find` resolves to an array, so a missing batch and a batch with nothing
+      // accepted arrive here looking identical. They need different answers —
+      // one is a bad id, the other is work still to do — so ask which it is.
+      if (!batchContributions || batchContributions.length === 0) {
+        const batch = await dbService.getBatchById(id)
+        if (!batch) {
+          res.status(404).json({ error: "Batch not found" })
+          return
+        }
+        const counts = await dbService.getBatchContributionStatusCounts(id)
+        res.status(400).json({
+          error: "No accepted contributions found in batch",
+          details: describeBatchComposition(counts)
         })
         return
       }
@@ -1250,8 +1291,14 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
       }
       contributions = [contribution]
     }
+    // Batch mode reports this above with the batch composition attached; this
+    // stays as a backstop. Sent as an object, not a bare string — the client
+    // reads `error`/`details` off the body, and a string body silently
+    // degrades to a generic "Could not publish".
     if (contributions.length === 0) {
-      res.status(400).json("No accepted contributions found in batch")
+      res.status(400).json({
+        error: "No accepted contributions found in batch"
+      })
       return
     }
     // For each contribution we flatten the changeSet + reviews.
@@ -1305,6 +1352,19 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   }
 })
 
+// Publication keys are `${id}_${mode}`. Contribution ids are uuids, which carry
+// no underscore, so the `_batch` suffix identifies a batch run unambiguously.
+const batchIdFromPublicationKey = (publicationKey: string): number | null => {
+  const suffix = "_batch"
+  if (!publicationKey.endsWith(suffix)) {
+    return null
+  }
+  // `Number("")` is 0, so an id-less key would otherwise parse as batch 0.
+  const raw = publicationKey.slice(0, -suffix.length)
+  const batchId = Number(raw)
+  return raw !== "" && Number.isInteger(batchId) && batchId > 0 ? batchId : null
+}
+
 // Poll publication status
 app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, res) => {
   try {
@@ -1330,6 +1390,25 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
       } catch (updateError) {
         console.error("Error updating contribution statuses:", updateError)
         // Don't fail the entire request if status update fails, just log it
+      }
+      try {
+        // Moving the contributions is only half of it: until the batch itself
+        // carries a date it stays on the pending list, still offering a Publish
+        // button for work that is already out.
+        //
+        // The key is `${id}_${mode}` (see /publish), so a batch run is the one
+        // ending in `_batch`; a single contribution has no batch to stamp.
+        const batchId = batchIdFromPublicationKey(pub_id)
+        if (batchId !== null) {
+          const stamped = await dbService.markBatchPublished(batchId)
+          if (stamped) {
+            console.log(`Marked batch ${batchId} as published`)
+          }
+        }
+      } catch (batchError) {
+        // Same reasoning as above — this is bookkeeping, and losing it must not
+        // cost the caller the status it asked for.
+        console.error("Error marking batch as published:", batchError)
       }
     }
     res.status(pubRes.status).json(pubState)
