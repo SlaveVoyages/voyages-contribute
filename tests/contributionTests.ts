@@ -18,6 +18,10 @@ test("combine contributions", () => {
   expect(deletions.length).toBe(0)
   expect(conflicts.length).toBe(0)
   expect(updates.length).toBeGreaterThan(100)
+  // Dumped for reading, not asserted on. `output/` is not in the repository,
+  // so it exists only where a build has already run — which is why this passed
+  // on developer machines and failed on a clean checkout.
+  fs.mkdirSync("output", { recursive: true })
   fs.writeFileSync(
     "output/combined.json",
     JSON.stringify({ deletions, updates, conflicts }, null, 2)
