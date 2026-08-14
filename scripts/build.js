@@ -24,7 +24,11 @@ const distPkg = {
   license: pkg.license,
   repository: pkg.repository,
   keywords: pkg.keywords,
-  dependencies: pkg.libDependencies
+  dependencies: pkg.libDependencies,
+  // Carried onto the artifact so it names the registry it belongs to, rather
+  // than depending on whichever npmrc happens to be in scope where it is
+  // published from.
+  publishConfig: pkg.publishConfig
 }
 
 // Make sure the destination directory exists
