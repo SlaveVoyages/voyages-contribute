@@ -109,8 +109,8 @@ test("an author is found by address, whatever name is recorded beside it", async
   // in the list it was fetched from.
   expect(authorIdentity("Jane <j@x.com> (bot)")).toBe("jane <j@x.com> (bot)")
 
-  // Three records for one person: created before names were recorded, after,
-  // and after they corrected their name. All three are theirs.
+  // Three records for one person: one from before they had a name to show,
+  // one after, and one after they corrected it. All three are theirs.
   const stored = [
     "j@x.com",
     "Jane Doe <j@x.com>",

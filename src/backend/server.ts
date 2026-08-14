@@ -654,44 +654,53 @@ app.patch(
 )
 
 // Add review to contribution
-app.post("/contributions/:id/add_review", authenticateJWT, async (req, res) => {
-  try {
-    const user = (req as any).user
-    const { changeSet } = req.body
-    // Validate required fields
-    if (!changeSet) {
-      res.status(400).json({
-        error: "Invalid review data",
-        details: "changeSet is required"
+// Reviewing is an editorial act, so the role is what stands in front of it.
+// That is also what makes the author below safe to take from the request: a
+// review may be attributed to something other than a person -- the imputation
+// bot writes one -- and requiring the role means whoever pushed it onto the
+// stack was entitled to.
+app.post(
+  "/contributions/:id/add_review",
+  authenticateJWT,
+  requireEditor,
+  async (req, res) => {
+    try {
+      const { changeSet } = req.body
+      // Validate required fields
+      if (!changeSet) {
+        res.status(400).json({
+          error: "Invalid review data",
+          details: "changeSet is required"
+        })
+        return
+      }
+      // Add author and timestamp to changeSet if not provided
+      const reviewChangeSet = {
+        ...changeSet,
+        author: changeSet.author || getAuthorFromRequest(req) || "Unknown",
+        timestamp: changeSet.timestamp || Date.now()
+      }
+      const updatedContribution = await dbService.addReviewToContribution(
+        req.params.id,
+        reviewChangeSet
+      )
+      if (!updatedContribution) {
+        res.status(404).json({ error: "Contribution not found" })
+        return
+      }
+      res.status(201).json(updatedContribution)
+    } catch (error) {
+      console.error(
+        `Error adding review to contribution ${req.params.id}:`,
+        error
+      )
+      res.status(500).json({
+        error: "Failed to add review",
+        details: (error as Error).message
       })
-      return
     }
-    // Add author and timestamp to changeSet if not provided
-    const reviewChangeSet = {
-      ...changeSet,
-      author: changeSet.author || user?.name || user?.email || "Unknown",
-      timestamp: changeSet.timestamp || Date.now()
-    }
-    const updatedContribution = await dbService.addReviewToContribution(
-      req.params.id,
-      reviewChangeSet
-    )
-    if (!updatedContribution) {
-      res.status(404).json({ error: "Contribution not found" })
-      return
-    }
-    res.status(201).json(updatedContribution)
-  } catch (error) {
-    console.error(
-      `Error adding review to contribution ${req.params.id}:`,
-      error
-    )
-    res.status(500).json({
-      error: "Failed to add review",
-      details: (error as Error).message
-    })
   }
-})
+)
 
 // Upload media for contribution
 app.post(

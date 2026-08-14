@@ -41,8 +41,8 @@ export const hasEditorRole = (
  * verified and the name is only there to be read. It has to close the string,
  * so a display name containing brackets cannot pass itself off as the address
  * — and so this agrees with the SQL that filters on the same rule, which can
- * only anchor at the end. An author with no address is taken whole, which is
- * what records written before addresses were recorded hold.
+ * only anchor at the end. An account with no name to show records the bare
+ * address, which is taken whole.
  */
 export const AUTHOR_IDENTITY_PATTERN = /<([^<>]*)>$/
 

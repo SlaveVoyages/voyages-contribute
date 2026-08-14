@@ -354,9 +354,9 @@ export class DatabaseService {
 
     // An author reads `Name <address>`, and the name is editable, so matching
     // the whole string would hide a contributor's own work from them the first
-    // time they corrected their profile. Only the address is matched. An
-    // author with no address matches only itself, which is what the records
-    // written before addresses were recorded hold.
+    // time they corrected their profile. Only the address is matched, either
+    // closing the string or standing alone, which is what an account with no
+    // name to show records.
     if (author) {
       const identity = likeLiteral(authorIdentity(author))
       where.changeSet = {
