@@ -351,15 +351,12 @@ export class DatabaseService {
         where.batch = { id: batchId }
       }
     }
-    
+
     // An author reads `Name <address>`, and the name is editable, so matching
     // the whole string would hide a contributor's own work from them the first
-    // time they corrected their profile. Only the address is matched, and the
-    // bare form the older records hold still matches itself.
-    // An author reads `Name <address>`, and the name is editable, so matching
-    // the whole string would hide a contributor's own work from them the first
-    // time they corrected their profile. Only the address is matched, and the
-    // bare form the older records hold still matches itself.
+    // time they corrected their profile. Only the address is matched. An
+    // author with no address matches only itself, which is what the records
+    // written before addresses were recorded hold.
     if (author) {
       const identity = likeLiteral(authorIdentity(author))
       where.changeSet = {
@@ -454,6 +451,28 @@ export class DatabaseService {
       page,
       limit
     }
+  }
+
+  /**
+   * Moves a contribution on, but only while it is still in the status the
+   * caller decided against. Returns null when it has moved since, so the
+   * caller can say so rather than write anyway.
+   *
+   * Deciding is read-modify-write across two requests: an editor accepting
+   * while an author retries a submission would otherwise both read the same
+   * row, and whichever saved last would silently discard the other's outcome.
+   */
+  async changeContributionStatus(
+    id: string,
+    from: ContributionStatus,
+    to: ContributionStatus,
+    decisionComments: string | undefined
+  ): Promise<ContributionEntity | null> {
+    const result = await this.contributionRepo.update(
+      { id, status: from },
+      { status: to, decisionComments: decisionComments ?? null } as any
+    )
+    return result.affected ? this.getContribution(id) : null
   }
 
   async updateContribution(

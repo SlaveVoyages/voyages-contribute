@@ -103,6 +103,11 @@ test("an author is found by address, whatever name is recorded beside it", async
   expect(authorIdentity("Evil <victim@x.com> <attacker@x.com>")).toBe(
     "attacker@x.com"
   )
+  // The address has to close the string, because the SQL that filters on the
+  // same rule can only anchor at the end. Were this to accept a trailing
+  // suffix, a row would pass the per-row ownership check while never appearing
+  // in the list it was fetched from.
+  expect(authorIdentity("Jane <j@x.com> (bot)")).toBe("jane <j@x.com> (bot)")
 
   // Three records for one person: created before names were recorded, after,
   // and after they corrected their name. All three are theirs.
@@ -147,6 +152,47 @@ test("an author is found by address, whatever name is recorded beside it", async
   expect(
     (await service.listContributions({ author: "%", limit: 100 })).data
   ).toEqual([])
+})
+
+test("a status change only lands on the status it was decided against", async () => {
+  const contribution = await service.getContribution("a")
+  expect(contribution?.status).toBe(ContributionStatus.WorkInProgress)
+
+  // Two editors read the same row; the first decides.
+  const first = await service.changeContributionStatus(
+    "a",
+    ContributionStatus.WorkInProgress,
+    ContributionStatus.Accepted,
+    "looks right"
+  )
+  expect(first?.status).toBe(ContributionStatus.Accepted)
+  expect(first?.decisionComments).toBe("looks right")
+
+  // The second is working from what it read before that, so it is refused
+  // rather than quietly overwriting the decision it never saw.
+  const second = await service.changeContributionStatus(
+    "a",
+    ContributionStatus.WorkInProgress,
+    ContributionStatus.Rejected,
+    "not yet"
+  )
+  expect(second).toBeNull()
+  expect((await service.getContribution("a"))?.status).toBe(
+    ContributionStatus.Accepted
+  )
+  expect((await service.getContribution("a"))?.decisionComments).toBe(
+    "looks right"
+  )
+
+  // Comments are dropped when the contribution leaves the decision they
+  // explain, so a resubmission does not carry the old verdict with it.
+  const cleared = await service.changeContributionStatus(
+    "a",
+    ContributionStatus.Accepted,
+    ContributionStatus.Submitted,
+    undefined
+  )
+  expect(cleared?.decisionComments ?? null).toBeNull()
 })
 
 test("a contribution is never fetched without an id", async () => {

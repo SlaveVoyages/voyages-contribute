@@ -38,13 +38,16 @@ export const hasEditorRole = (
  * The identity inside a recorded author, which is what authorization compares.
  *
  * An author reads `Name <address>`, where the address is the part a token
- * verified and the name is only there to be read. The *last* bracketed group
- * wins, so a display name that contains brackets cannot pass itself off as the
- * address. An author with no brackets is taken whole, which is what the older
- * records hold.
+ * verified and the name is only there to be read. It has to close the string,
+ * so a display name containing brackets cannot pass itself off as the address
+ * — and so this agrees with the SQL that filters on the same rule, which can
+ * only anchor at the end. An author with no address is taken whole, which is
+ * what records written before addresses were recorded hold.
  */
+export const AUTHOR_IDENTITY_PATTERN = /<([^<>]*)>$/
+
 export const authorIdentity = (author: string): string => {
-  const match = /<([^<>]*)>[^<>]*$/.exec(author)
+  const match = AUTHOR_IDENTITY_PATTERN.exec(author)
   return (match ? match[1] : author).trim().toLowerCase()
 }
 

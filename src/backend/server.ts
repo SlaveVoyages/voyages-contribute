@@ -4,12 +4,7 @@ import express, {
   NextFunction,
   ErrorRequestHandler
 } from "express"
-import {
-  initDatabase,
-  DatabaseService,
-  ContributionEntity,
-  AppDataSource
-} from "./db"
+import { initDatabase, DatabaseService, AppDataSource } from "./db"
 import { ensureDatabaseExists, prepareSchema, readMigrationMode } from "./schema"
 import { jwtVerify, createRemoteJWKSet } from "jose"
 import dotenv from "dotenv"
@@ -575,6 +570,14 @@ app.patch(
       // itself is limited to the contribution's author.
       const user = (req as any).user
       const isEditor = hasEditorRole(user?.app_metadata)
+      // A repeated request asks for a state the contribution is already in, so
+      // it has nothing to refuse. Without this a client whose response was lost
+      // in transit retries a submission that went through and is told it lacks
+      // permission for it.
+      if (existing.status === status) {
+        res.json(existing)
+        return
+      }
       if (!isEditor) {
         if (status !== ContributionStatus.Submitted) {
           res.status(403).json({
@@ -610,18 +613,32 @@ app.patch(
           return
         }
       }
-      let updatedContribution: ContributionEntity = {
-        ...existing,
+      // Comments belong to the decision that produced them: they are replaced
+      // when the request carries some, kept when it does not, and dropped when
+      // the contribution leaves the decision they explain. Otherwise a
+      // resubmitted contribution reaches the editor queue still showing why it
+      // was rejected, which reads as a verdict on the new submission.
+      const decisionComment =
+        decisionComments !== undefined
+          ? decisionComments?.toString()
+          : status === ContributionStatus.Submitted
+            ? undefined
+            : existing.decisionComments
+
+      const updatedContribution = await dbService.changeContributionStatus(
+        existing.id,
+        existing.status,
         status,
-        // Only replace the comments when the request carries some. Sending a
-        // bare {status} would otherwise erase the reason an editor recorded
-        // for the previous decision.
-        ...(decisionComments === undefined
-          ? {}
-          : { decisionComments: decisionComments?.toString() })
+        decisionComment
+      )
+      if (!updatedContribution) {
+        res.status(409).json({
+          error: "Contribution status changed",
+          details:
+            "Someone else decided this contribution while you were working on it. Reload it and try again."
+        })
+        return
       }
-      updatedContribution =
-        await dbService.createContribution(updatedContribution)
       res.json(updatedContribution)
     } catch (error) {
       console.error(
