@@ -1,0 +1,96 @@
+name: Publish package
+
+# Every merge to main releases. package.json carries the major and minor and
+# leaves the patch at zero; the patch is whatever the registry has not used
+# yet, so a merge that changes nothing about the version still ships as the
+# next patch, and a merge that raises the minor starts that series at zero.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# One release at a time: two merges landing together would otherwise read the
+# same highest patch and try to publish it twice.
+concurrency:
+  group: publish-package
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: "@slavevoyages"
+
+      - name: Install
+        run: npm ci
+
+      # A release is published the moment it is built, so the checks run first.
+      - name: Check
+        run: |
+          set -euo pipefail
+          npx tsc --noEmit
+          npm run lint
+          npx vitest run
+
+      - name: Work out the version to publish
+        id: version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          SERIES=$(node -p "require('./package.json').version")
+
+          # A package with no releases yet is not an error, it is the first one.
+          PUBLISHED=$(npm view "$NAME" versions --json 2>/dev/null || true)
+
+          # The scheme lives in scripts/nextVersion.js, where it is tested.
+          NEXT=$(node scripts/nextVersion.js "$SERIES" "$PUBLISHED")
+
+          echo "Publishing $NAME@$NEXT"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "tag=v$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Build the package
+        run: npm run pack
+
+      - name: Stamp the version onto the artifact
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm version "$VERSION" --no-git-tag-version --allow-same-version \
+            --prefix output/frontend
+          node -p "'artifact is ' + require('./output/frontend/package.json').version"
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm publish ./output/frontend
+
+      # After publishing, so a tag never names a version that does not exist.
+      # The commit message reaches the script as data, never as shell: it is
+      # written by whoever merged, and interpolating it would run it.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes "${SUBJECT:-Manual run}"
