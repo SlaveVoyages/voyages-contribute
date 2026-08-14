@@ -43,12 +43,18 @@ export const hasEditorRole = (
  * — and so this agrees with the SQL that filters on the same rule, which can
  * only anchor at the end. An account with no name to show records the bare
  * address, which is taken whole.
+ *
+ * What is recorded is taken as it stands, never case-folded. An address is
+ * lowered once, where the token is read, so a stored one is already in the
+ * form it will be compared against — and folding here would not agree with
+ * the SQL doing the same job, which cannot fold beyond ASCII. That gap decides
+ * ownership one way per row and the other way per query.
  */
 export const AUTHOR_IDENTITY_PATTERN = /<([^<>]*)>$/
 
 export const authorIdentity = (author: string): string => {
   const match = AUTHOR_IDENTITY_PATTERN.exec(author)
-  return (match ? match[1] : author).trim().toLowerCase()
+  return (match ? match[1] : author).trim()
 }
 
 export const requireEditor = (

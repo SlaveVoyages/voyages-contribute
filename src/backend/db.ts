@@ -357,16 +357,23 @@ export class DatabaseService {
     // time they corrected their profile. Only the address is matched, either
     // closing the string or standing alone, which is what an account with no
     // name to show records.
+    //
+    // No case folding here, deliberately: an address is lowered once, where
+    // the token is read, so both sides of this are already in the same form.
+    // `LOWER()` would not agree with the JavaScript checking the same
+    // ownership per row, since sqlite folds ASCII only — and a rule that says
+    // yes per row and no per query lets a contributor open a contribution that
+    // never appears in their list.
     if (author) {
-      const identity = likeLiteral(authorIdentity(author))
+      const identity = authorIdentity(author)
       where.changeSet = {
         author: Raw(
           (column) =>
-            `(LOWER(${column}) = :authorIdentity` +
-            ` OR LOWER(${column}) LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
+            `(${column} = :authorIdentity` +
+            ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
           {
-            authorIdentity: authorIdentity(author),
-            authorSuffix: `%<${identity}>`
+            authorIdentity: identity,
+            authorSuffix: `%<${likeLiteral(identity)}>`
           }
         )
       }
@@ -469,25 +476,32 @@ export class DatabaseService {
     decisionComments: string | null | undefined
   ): Promise<ContributionEntity | null> {
     const comments = decisionComments ?? null
-    await this.contributionRepo.update(
-      { id, status: from },
-      { status: to, decisionComments: comments } as any
-    )
-    // Read back rather than trusting the row count. MySQL reports rows whose
-    // values *changed*, so a request replayed with the values already stored
-    // is indistinguishable from one that matched nothing — and sqlite reports
-    // rows matched, so no test here can tell the two apart either. What the
-    // caller needs to know is whether the contribution now says what they
-    // asked for.
-    const current = await this.getContribution(id)
-    if (
-      !current ||
-      current.status !== to ||
-      (current.decisionComments ?? null) !== comments
-    ) {
-      return null
-    }
-    return current
+    // Both statements run in one transaction, so the read describes the row
+    // this write left behind. Apart, a third party deciding in between makes a
+    // write that did land look like one that did not, and the caller is told
+    // to reload and re-apply — which reverts the decision it was warned about.
+    return AppDataSource.transaction(async (manager) => {
+      await manager.update(
+        ContributionEntity,
+        { id, status: from },
+        { status: to, decisionComments: comments } as any
+      )
+      // Read back rather than trusting the row count. MySQL reports rows whose
+      // values *changed*, so a request replayed with the values already stored
+      // is indistinguishable from one that matched nothing — and sqlite
+      // reports rows matched, so no test here can tell the two apart either.
+      // What the caller needs to know is whether the contribution now says
+      // what they asked for.
+      const current = await getFullContribution(manager, id)
+      if (
+        !current ||
+        current.status !== to ||
+        (current.decisionComments ?? null) !== comments
+      ) {
+        return null
+      }
+      return current
+    })
   }
 
   async updateContribution(
@@ -600,7 +614,10 @@ export class DatabaseService {
   // Get media by ID (helper method for deletion)
   async getMediaById(mediaId: number): Promise<ContributionMediaEntity | null> {
     return await this.mediaRepo.findOne({
-      where: { id: mediaId }
+      where: { id: mediaId },
+      // The contribution it hangs off, so a caller can be checked against its
+      // author before the file is removed.
+      relations: ["contribution", "contribution.changeSet"]
     })
   }
 

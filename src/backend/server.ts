@@ -28,6 +28,7 @@ import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
 import { authorIdentity, hasEditorRole, requireEditor } from "./authz"
+import { isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
 dotenv.config()
@@ -322,17 +323,31 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
 
     // Narrowing to one author is how a contributor lists their own work at any
     // status, which /contributions/wip cannot do. Other people's is not theirs
-    // to enumerate, so without the editorial role the filter only ever means
-    // themselves.
+    // to enumerate — and asking for it is refused rather than quietly answered
+    // with their own, which would look like an authoritative answer about
+    // somebody else.
     const requestedAuthor =
       typeof req.query.author === "string" && req.query.author.length > 0
         ? req.query.author
         : undefined
-    const author = isEditor
-      ? requestedAuthor
-      : requestedAuthor !== undefined
-        ? (ownIdentity ?? undefined)
-        : undefined
+    if (
+      requestedAuthor !== undefined &&
+      !isEditor &&
+      authorIdentity(requestedAuthor).toLowerCase() !== ownIdentity
+    ) {
+      res
+        .status(403)
+        .json({ error: "You cannot list contributions made by others" })
+      return
+    }
+    // Whoever asked, the query runs on the identity as it is recorded, so the
+    // spelling a client happened to use cannot narrow the result to nothing.
+    const author =
+      requestedAuthor === undefined
+        ? undefined
+        : isEditor
+          ? requestedAuthor
+          : (ownIdentity ?? undefined)
 
     const result = await dbService.listContributions({
       ...getPaginationArgs(req),
@@ -364,12 +379,16 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
 
     // Carry every filter into the links, so a page beyond the first describes
     // the same set as the totals reported alongside it.
+    // Only values that survive a round trip are echoed. A nested parameter
+    // arrives as an object, and stringifying one would put "[object Object]"
+    // in a link that claims to describe this same set.
     const filters = Object.entries(req.query)
       .filter(([key]) => key !== "page" && key !== "limit")
-      .flatMap(([key, value]) =>
-        (Array.isArray(value) ? value : [value]).map(
-          (one) => `&${encodeURIComponent(key)}=${encodeURIComponent(String(one))}`
-        )
+      .flatMap(([key, value]) => (Array.isArray(value) ? value : [value]).map((one) => [key, one] as const))
+      .filter(([, one]) => typeof one === "string")
+      .map(
+        ([key, one]) =>
+          `&${encodeURIComponent(key)}=${encodeURIComponent(one as string)}`
       )
       .join("")
     const pageUrl = (page: number) =>
@@ -382,7 +401,8 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       links: {
         self: pageUrl(result.page),
         first: pageUrl(1),
-        last: pageUrl(totalPages),
+        // An empty result still has a first page to point at.
+        last: pageUrl(Math.max(totalPages, 1)),
         next: result.page < totalPages ? pageUrl(result.page + 1) : null,
         prev: result.page > 1 ? pageUrl(result.page - 1) : null
       }
@@ -535,9 +555,38 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
 })
 
 // Create new/replace contribution
+/**
+ * Whether the request may act on a contribution. Its author may, and so may an
+ * editor: attaching a file to someone's work, or taking one off it, changes
+ * that work as surely as editing it does.
+ */
+const mayActOnContribution = (
+  req: Request,
+  contribution: { changeSet?: { author?: string } } | null | undefined
+): boolean => {
+  if (!contribution) {
+    return false
+  }
+  if (hasEditorRole((req as any).user?.app_metadata)) {
+    return true
+  }
+  const identity = getAuthorIdentity(req)
+  return (
+    !!identity && authorIdentity(contribution.changeSet?.author ?? "") === identity
+  )
+}
+
 app.post("/contributions", authenticateJWT, async (req, res) => {
   try {
     const author = getAuthorFromRequest(req)
+    if (!isExactEntityRef(req.body.root)) {
+      res.status(400).json({
+        error: "Invalid root",
+        details:
+          "root must name one entity as { type, schema, id } and carry nothing else."
+      })
+      return
+    }
     // Check if contribution already exists
     const existing = req.body.id
       ? await dbService.getContribution(req.body.id)
@@ -644,6 +693,16 @@ app.patch(
       // first, before anything is returned or reported about it. Deciding one
       // is an editorial act; submitting one's own is not.
       if (!isEditor) {
+        // The comment records an editor's reasoning for a decision, so an
+        // author submitting their own work cannot write one and have it read
+        // back later as an editorial verdict.
+        if (commentSupplied) {
+          res.status(403).json({
+            error: "Editor role required",
+            details: "Only an editor can record decision comments."
+          })
+          return
+        }
         const identity = getAuthorIdentity(req)
         if (
           !identity ||
@@ -802,6 +861,18 @@ app.post(
         })
         return
       }
+      const contribution = await dbService.getContribution(contributionId)
+      if (!mayActOnContribution(req, contribution)) {
+        await fs.unlink(uploadedFile.path).catch(() => {})
+        if (!contribution) {
+          res.status(404).json({ error: "Contribution not found" })
+          return
+        }
+        res.status(403).json({
+          error: "You cannot attach media to contributions made by others"
+        })
+        return
+      }
       const mediaData = {
         type,
         file: uploadedFile.filename, // Store the generated filename
@@ -880,6 +951,12 @@ app.delete("/media/:mediaId", authenticateJWT, async (req, res) => {
     const media = await dbService.getMediaById(mediaId)
     if (!media) {
       res.status(404).json({ error: "Media not found" })
+      return
+    }
+    if (!mayActOnContribution(req, media.contribution)) {
+      res.status(403).json({
+        error: "You cannot remove media from contributions made by others"
+      })
       return
     }
     // Delete the file from disk

@@ -49,6 +49,22 @@ export const isEntityRef = (maybeRef: EntityRef | any): maybeRef is EntityRef =>
   !!(maybeRef as EntityRef).schema &&
   !!(maybeRef as EntityRef).id
 
+/**
+ * A reference carrying nothing beyond the three fields that identify an
+ * entity.
+ *
+ * Stricter than `isEntityRef` because a stored reference is also searched as
+ * text: an extra nested key with an `id` of its own is indistinguishable from
+ * the real one to anything matching on the serialized form, so a reference
+ * kept for one entity would answer for another.
+ */
+export const isExactEntityRef = (maybeRef: unknown): maybeRef is EntityRef =>
+  isEntityRef(maybeRef) &&
+  Object.keys(maybeRef).sort().join(",") === "id,schema,type" &&
+  (maybeRef.type === "existing" || maybeRef.type === "new") &&
+  typeof maybeRef.schema === "string" &&
+  (typeof maybeRef.id === "string" || typeof maybeRef.id === "number")
+
 export const areMatch = (a: EntityRef, b: EntityRef) =>
   a === b || (a.type === b.type && a.schema === b.schema && a.id === b.id)
 

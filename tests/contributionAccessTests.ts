@@ -99,7 +99,11 @@ test("an author is found by address, whatever name is recorded beside it", async
   // bracketed group wins, so a name cannot pass itself off as the address.
   expect(authorIdentity("Jane Doe <j@x.com>")).toBe("j@x.com")
   expect(authorIdentity("j@x.com")).toBe("j@x.com")
-  expect(authorIdentity("  J@X.com  ")).toBe("j@x.com")
+  // Taken as recorded, never case-folded: an address is lowered once, where
+  // the token is read, and folding again here would not agree with the SQL
+  // doing the same job — sqlite folds ASCII only. The row below shows what
+  // that costs.
+  expect(authorIdentity("  J@X.com  ")).toBe("J@X.com")
   expect(authorIdentity("Evil <victim@x.com> <attacker@x.com>")).toBe(
     "attacker@x.com"
   )
@@ -107,7 +111,7 @@ test("an author is found by address, whatever name is recorded beside it", async
   // same rule can only anchor at the end. Were this to accept a trailing
   // suffix, a row would pass the per-row ownership check while never appearing
   // in the list it was fetched from.
-  expect(authorIdentity("Jane <j@x.com> (bot)")).toBe("jane <j@x.com> (bot)")
+  expect(authorIdentity("Jane <j@x.com> (bot)")).toBe("Jane <j@x.com> (bot)")
 
   // Three records for one person: one from before they had a name to show,
   // one after, and one after they corrected it. All three are theirs.
@@ -115,7 +119,12 @@ test("an author is found by address, whatever name is recorded beside it", async
     "j@x.com",
     "Jane Doe <j@x.com>",
     "Jane Q. Doe <j@x.com>",
-    "Someone Else <other@x.com>"
+    "Someone Else <other@x.com>",
+    // An address that was never lowered — which nothing here writes, but a
+    // row could hold. It has to be judged the same way by the list and by the
+    // per-row check; folding in one place and not the other is what lets a
+    // contributor open a contribution that never appears in their list.
+    "José Álvarez <JOSÉ@x.com>"
   ]
   for (const [index, authorValue] of stored.entries()) {
     const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
@@ -149,9 +158,48 @@ test("an author is found by address, whatever name is recorded beside it", async
     limit: 100
   })
   expect(theirs.data.map((c) => c.id)).toEqual(["author-3"])
+
+  // The list and the ownership check must reach the same verdict about the
+  // unlowered row. A token carrying JOSÉ@x.com presents it as josé@x.com, and
+  // neither says that owns author-4 — where case-folding on only one side
+  // would have had the check say yes and the list say no.
+  const asToken = "josé@x.com"
+  expect(authorIdentity("José Álvarez <JOSÉ@x.com>")).not.toBe(asToken)
+  const accented = await service.listContributions({
+    author: asToken,
+    limit: 100
+  })
+  expect(accented.data.map((c) => c.id)).toEqual([])
   expect(
     (await service.listContributions({ author: "%", limit: 100 })).data
   ).toEqual([])
+})
+
+test("a root names one entity and nothing else", async () => {
+  const { isExactEntityRef } = await import("../src/models/changeSets")
+
+  expect(isExactEntityRef({ type: "existing", schema: "Voyage", id: 2 })).toBe(
+    true
+  )
+  expect(isExactEntityRef({ type: "new", schema: "Voyage", id: "2" })).toBe(true)
+
+  // A stored root is searched as text, so a nested id is indistinguishable
+  // from the real one: this shape would answer a "is voyage 2 taken?" probe
+  // while being rooted at voyage 9.
+  expect(
+    isExactEntityRef({
+      type: "existing",
+      schema: "Voyage",
+      id: 9,
+      extra: { id: 2 }
+    })
+  ).toBe(false)
+
+  expect(isExactEntityRef({ schema: "Voyage", id: 2 })).toBe(false)
+  expect(isExactEntityRef({ type: "borrowed", schema: "Voyage", id: 2 })).toBe(
+    false
+  )
+  expect(isExactEntityRef(null)).toBe(false)
 })
 
 test("a status change only lands on the status it was decided against", async () => {
