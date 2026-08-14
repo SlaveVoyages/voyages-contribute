@@ -1,7 +1,7 @@
 import { AppDataSource } from "../backend/db"
 import {
   applyPendingMigrations,
-  createDatabaseIfMissing,
+  ensureDatabaseExists,
   migrationStatus
 } from "../backend/schema"
 
@@ -13,8 +13,11 @@ import {
 export const runMigrateCommand = async (args: string[]): Promise<number> => {
   const wants = (flag: string) => args.includes(flag)
 
-  if (wants("--create-database")) {
-    await createDatabaseIfMissing()
+  // Creating is limited to the command that writes: a reporting command that
+  // brought a database into existence would be a surprising thing to point at
+  // production. Creating only ever happens when one is genuinely absent.
+  if (!wants("--status") && !wants("--check")) {
+    await ensureDatabaseExists()
   }
 
   await AppDataSource.initialize()

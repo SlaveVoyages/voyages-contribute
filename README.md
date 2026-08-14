@@ -44,22 +44,26 @@ docker run --rm -e MIGRATION_MODE=job -v <volume>:/etc/data <image>
 Stop the service first. SQLite tolerates one writer, so migrating underneath a
 running server is not safe.
 
+A mode that applies migrations takes a deployment from nothing to a working
+database, creating one if there is none — so `job` on an empty volume is all a
+first deployment needs. `none` never creates anything and so needs no
+privilege to.
+
+Whether the database was found or created is logged either way, because a
+mistyped `CONTRIB_DB_PATH` or `CONTRIB_DB_NAME` yields a new empty database
+rather than an error, and that log line is what tells the two apart.
+
 ### By hand, or in CI
 
 ```
-npm run tools -- migrate                    # apply anything pending
-npm run tools -- migrate --status           # what is applied, what is not
-npm run tools -- migrate --check            # exit 1 if anything is pending
-npm run tools -- migrate --create-database  # MySQL only, see below
+npm run tools -- migrate           # apply anything pending
+npm run tools -- migrate --status  # what is applied, what is not
+npm run tools -- migrate --check   # exit 1 if anything is pending
 ```
 
 `--check` is the one for CI: it fails when the schema is behind the code,
-rather than leaving it to surface at runtime.
-
-SQLite creates its file on connect, so migrating alone is enough to go from
-nothing to a working database. MySQL will not connect to a database that does
-not exist and TypeORM will not create one, so a first run there needs
-`--create-database`, which `job` mode does not do for itself.
+rather than leaving it to surface at runtime. Neither it nor `--status`
+creates a database, since a reporting command should not.
 
 Migrating a database built by an older version of this server, when
 `synchronize` still created the schema, records the initial migration without

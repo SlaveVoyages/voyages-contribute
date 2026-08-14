@@ -1,4 +1,6 @@
 import { DataSource } from "typeorm"
+import { existsSync } from "fs"
+import { resolve } from "path"
 import { AppDataSource } from "./db"
 
 /**
@@ -91,26 +93,50 @@ export const applyPendingMigrations = async (
 }
 
 /**
- * MySQL will not connect to a database that does not exist, and TypeORM does
- * not create one. Connects without selecting a database to issue the CREATE,
- * then hands back so the caller can connect normally. A no-op for sqlite,
- * whose driver creates the file on connect.
+ * An identifier cannot be a bound parameter, so the name is quoted into the
+ * `CREATE DATABASE` and has to be checked first. MySQL's own rules are wider
+ * than this; anything outside it is a typo worth refusing.
  */
-export const createDatabaseIfMissing = async (): Promise<void> => {
-  const options = AppDataSource.options
-  if (options.type !== "mysql") {
-    console.log("create-database: nothing to do for", options.type)
+const isSafeDatabaseName = (name: string): boolean => /^[A-Za-z0-9_$]+$/.test(name)
+
+/**
+ * Sqlite needs nothing created — its driver makes the file, and the directory
+ * holding it, on connect. Looking before TypeORM is involved is what tells a
+ * genuine first run apart from a mistyped path, which otherwise presents as a
+ * working database that happens to be empty.
+ */
+const reportSqliteFile = (database: string): void => {
+  if (database === ":memory:") {
     return
   }
-  const { host, port, username, password, database } = options as {
-    host?: string
-    port?: number
-    username?: string
-    password?: string
-    database?: string
-  }
+  console.log(
+    existsSync(database)
+      ? `database: found ${database}`
+      : `database: ${resolve(database)} does not exist and will be created empty`
+  )
+}
+
+/**
+ * MySQL will not connect to a database that does not exist, and TypeORM does
+ * not create one. Connects without selecting a database to look, and issues
+ * the CREATE only when it is genuinely absent — so a deployment whose database
+ * already exists never needs the privilege to create one.
+ */
+const ensureMysqlDatabase = async (options: {
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  database?: string
+}): Promise<void> => {
+  const { host, port, username, password, database } = options
   if (!database) {
     throw new Error("CONTRIB_DB_NAME is not set; nothing to create.")
+  }
+  if (!isSafeDatabaseName(database)) {
+    throw new Error(
+      `CONTRIB_DB_NAME must match [A-Za-z0-9_$]+; got "${database}".`
+    )
   }
   const bootstrap = new DataSource({
     type: "mysql",
@@ -123,13 +149,37 @@ export const createDatabaseIfMissing = async (): Promise<void> => {
   })
   await bootstrap.initialize()
   try {
-    await bootstrap.query(
-      `CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4`
+    const found: unknown[] = await bootstrap.query(
+      "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
+      [database]
     )
-    console.log(`create-database: ensured \`${database}\` exists`)
+    if (found.length > 0) {
+      console.log(`database: found \`${database}\``)
+      return
+    }
+    await bootstrap.query(
+      `CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4`
+    )
+    console.log(`database: created \`${database}\`, which did not exist`)
   } finally {
     await bootstrap.destroy()
   }
+}
+
+/**
+ * Makes the database reachable so the caller can connect to it normally.
+ *
+ * Whether it was found or created is logged either way: a mistyped name
+ * produces a new empty database rather than an error, and the log line naming
+ * it is what distinguishes that from a genuine first run.
+ */
+export const ensureDatabaseExists = async (): Promise<void> => {
+  const options = AppDataSource.options
+  if (options.type === "mysql") {
+    await ensureMysqlDatabase(options as Parameters<typeof ensureMysqlDatabase>[0])
+    return
+  }
+  reportSqliteFile(String(options.database))
 }
 
 /**

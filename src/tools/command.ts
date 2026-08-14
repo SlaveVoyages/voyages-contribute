@@ -168,6 +168,6 @@ if (cmd === "migrate") {
     `Usage: npm run tools <command='import'|'inspect'|'migrate'> 
       import <apiUrl> <schemaName> <filename> (<maxRows>) (<contribStatus>)
       inspect <schemaName> (<optional file to extract headers from>)
-      migrate (--status | --check) (--create-database)`
+      migrate (--status | --check)`
   )
 }
