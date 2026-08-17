@@ -738,7 +738,11 @@ app.patch(
         existing.id,
         existing.status,
         status,
-        suppliedComment
+        suppliedComment,
+        // The verified identity from the token, not anything the body claimed —
+        // this is the record of who decided, so it has to come from the same
+        // place the authorization decision did.
+        identity
       )
       if (!updatedContribution) {
         res.status(409).json({
@@ -1400,7 +1404,14 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
         // ending in `_batch`; a single contribution has no batch to stamp.
         const batchId = batchIdFromPublicationKey(pub_id)
         if (batchId !== null) {
-          const stamped = await dbService.markBatchPublished(batchId)
+          // Whoever's poll observed the completion is recorded as the publisher.
+          // Publication is a background job with no identity of its own, and
+          // this is the closest thing to a human decision it has: the editor who
+          // pressed Publish is the one whose client keeps polling it.
+          const stamped = await dbService.markBatchPublished(
+            batchId,
+            getAuthorIdentity(req)
+          )
           if (stamped) {
             console.log(`Marked batch ${batchId} as published`)
           }

@@ -1,5 +1,7 @@
 import { MigrationInterface, QueryRunner, Table } from "typeorm"
 
+import { RecordDecisionAuthors1786200000000 } from "./1786200000000-RecordDecisionAuthors"
+
 /**
  * The schema as it stood when migrations were introduced, reproducing what
  * `synchronize` built until then.
@@ -159,5 +161,9 @@ export class InitialSchema1786100000000 implements MigrationInterface {
 }
 
 // Referenced by name so the bundler keeps it and the DataSource can list it
-// without a filesystem glob, which does not survive bundling.
-export const AllMigrations = [InitialSchema1786100000000]
+// without a filesystem glob, which does not survive bundling. Order matters:
+// TypeORM runs them in list order, so new migrations append.
+export const AllMigrations = [
+  InitialSchema1786100000000,
+  RecordDecisionAuthors1786200000000
+]

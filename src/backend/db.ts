@@ -65,6 +65,9 @@ export class PublicationBatchEntity implements PublicationBatch {
   @Column({ type: "varchar", nullable: true })
   published!: number | null
 
+  @Column({ type: "varchar", nullable: true })
+  publishedBy!: string | null
+
   @OneToMany(() => ContributionEntity, (contribution) => contribution.batch)
   contributions!: ContributionEntity[]
 }
@@ -148,6 +151,12 @@ export class ContributionEntity implements Contribution {
 
   @Column({ type: "varchar", nullable: true })
   decisionComments?: string
+
+  @Column({ type: "varchar", nullable: true })
+  decidedBy?: string | null
+
+  @Column({ type: "bigint", nullable: true })
+  decidedAt?: number | null
 }
 
 // Database connection
@@ -495,9 +504,14 @@ export class DatabaseService {
     id: string,
     from: ContributionStatus,
     to: ContributionStatus,
-    decisionComments: string | null | undefined
+    decisionComments: string | null | undefined,
+    decidedBy?: string | null
   ): Promise<ContributionEntity | null> {
     const comments = decisionComments ?? null
+    // Written with the status, not carried over: the decider belongs to *this*
+    // decision, so a later move without a known identity records none rather
+    // than leaving the previous editor's name against a status they never set.
+    const decider = decidedBy ?? null
     // Both statements run in one transaction, so the read describes the row
     // this write left behind. Apart, a third party deciding in between makes a
     // write that did land look like one that did not, and the caller is told
@@ -506,7 +520,12 @@ export class DatabaseService {
       await manager.update(
         ContributionEntity,
         { id, status: from },
-        { status: to, decisionComments: comments } as any
+        {
+          status: to,
+          decisionComments: comments,
+          decidedBy: decider,
+          decidedAt: decider === null ? null : Date.now()
+        } as any
       )
       // Read back rather than trusting the row count. MySQL reports rows whose
       // values *changed*, so a request replayed with the values already stored
@@ -761,12 +780,16 @@ export class DatabaseService {
   // Returns whether this call was the one that stamped it.
   async markBatchPublished(
     batchId: number,
+    publishedBy?: string | null,
     publishedAt: number = Date.now()
   ): Promise<boolean> {
     const result = await this.batchRepository
       .createQueryBuilder()
       .update(PublicationBatchEntity)
-      .set({ published: publishedAt })
+      // Written together with the timestamp and under the same guard, so the
+      // pair is always consistent: a batch never carries a publication date
+      // with someone else's name, or a name with no date.
+      .set({ published: publishedAt, publishedBy: publishedBy ?? null })
       .where("id = :batchId", { batchId })
       .andWhere("published IS NULL")
       .execute()

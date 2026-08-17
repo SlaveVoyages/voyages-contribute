@@ -19,6 +19,11 @@ export interface PublicationBatch {
    * The timestamp of the publication batch, if it has been published.
    */
   published: number | null
+  /**
+   * Who published the batch. Set alongside `published`, and like it, written
+   * once — a re-publish must not rewrite who did it the first time.
+   */
+  publishedBy?: string | null
 }
 
 export enum ContributionStatus {
@@ -77,6 +82,21 @@ export interface Contribution {
    * Comments by the editor regarding the final decision on this Contribution.
    */
   decisionComments?: string
+  /**
+   * Who last decided this contribution's status, and when.
+   *
+   * `changeSet.author` records who *wrote* the contribution and each review,
+   * which is a different question from who accepted or rejected it — an editor
+   * can decide without leaving a review. Without these the UI has no honest
+   * answer for a "Reviewer" column.
+   *
+   * Belongs to the decision, not the row: cleared alongside `decisionComments`
+   * whenever the status moves again, so it always names the current status's
+   * decider rather than a previous one's.
+   */
+  decidedBy?: string | null
+  /** Epoch milliseconds. */
+  decidedAt?: number | null
 }
 
 /**
