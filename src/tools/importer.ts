@@ -160,6 +160,20 @@ export interface LookupError extends MappingError {
   value: string
 }
 
+/**
+ * A row described an entity that could not be created as described.
+ *
+ * Reported rather than imported, because the alternative is a record that is
+ * refused at publication for the same reason and holds a whole batch back until
+ * someone finds it. The row is still in the file; once whatever it referred to
+ * exists, re-running picks it up.
+ */
+export interface IncompleteEntityError extends MappingError {
+  readonly kind: "incomplete"
+  schema: string
+  missing: string
+}
+
 const mkLookupError = (
   schema: EntitySchema,
   property: string | Property,
@@ -171,6 +185,60 @@ const mkLookupError = (
   value: Array.isArray(value) ? value.join("|") : String(value),
   hash: () => `${schema.name}_${value}`
 })
+
+const mkIncompleteError = (
+  schema: EntitySchema,
+  property: Property
+): IncompleteEntityError => ({
+  kind: "incomplete" as const,
+  schema: schema.name,
+  missing: property.label,
+  hash: () => `${schema.name}_incomplete_${property.label}`
+})
+
+/**
+ * The properties an entity cannot be created without.
+ *
+ * The same set publication checks on a new entity, asked here so that a record
+ * which could not pass then is not written now. Kinds that describe other
+ * entities rather than a value of their own are left out, as they are there.
+ */
+const mandatoryOf = (schema: EntitySchema): Property[] =>
+  schema.properties.filter(
+    (p) =>
+      p.kind !== "table" &&
+      p.kind !== "ownedEntityList" &&
+      p.kind !== "entityOwned" &&
+      !!(p as { notNull?: boolean }).notNull
+  )
+
+/**
+ * Whether a change carries anything, as opposed to merely existing.
+ *
+ * A mapping that resolves to nothing still produces a change -- that is how a
+ * value is cleared -- so the presence of changes says only that columns were
+ * considered, not that any of them held something. The distinction matters
+ * where a change decides whether an entity is created at all.
+ *
+ * Nested kinds are asked the same question of their own contents: a list whose
+ * every item is empty is itself empty.
+ */
+const hasValue = (change: PropertyChange): boolean => {
+  switch (change.kind) {
+    case "direct":
+      return change.changed !== null && change.changed !== undefined
+    case "linked":
+      return change.changed !== null
+    case "table":
+      return Object.values(change.changes).some((v) => v !== null)
+    case "owned":
+      return change.changes.some(hasValue)
+    case "ownedList":
+      return change.modified.some((m) => m.changes.some(hasValue))
+    default:
+      return true
+  }
+}
 
 export const MapRow = async (
   row: Record<string, string>,
@@ -328,7 +396,16 @@ export const MapRow = async (
           }
         ]
       } else if (entity === null) {
+        // The row named something the lookup could not find. That is reported
+        // and nothing is written, because "we could not resolve this" and "the
+        // value is nothing" are different statements and only the second one
+        // belongs in a change. Emitting the null said the second, which then
+        // read as a deliberately empty link -- enough to bring an entity into
+        // being around it, and that entity could never satisfy the property it
+        // was missing. What the row said is preserved in the error, and in the
+        // CSV, so re-running once the referenced record exists picks it up.
         errors.push(mkLookupError(referencedSchema, property, value))
+        return []
       } else if ((entity as LookupMaterializedEntity).lookupValue) {
         // Setup an entry in the local contex to indicate which value was
         // matched in the lookup.
@@ -403,13 +480,31 @@ export const MapRow = async (
           const changes = await processMapping(m, itemSchema, localContext)
           itemChanges.push(...changes)
         }
-        if (itemChanges.length > 0) {
-          addedEntities.push({
-            kind: "owned" as const,
-            ownedEntity: getBlank(itemSchema.name),
-            changes: itemChanges
-          })
+        // A new entity is worth bringing into being only if the row said
+        // something about it, and only if what it said is enough to stand up.
+        //
+        // Counting changes rather than looking at them made a set of nothings
+        // read as content: a column that resolved to null still produced a
+        // change, and that sufficed to add an entity holding nothing but its
+        // own emptiness. And a row that filled in some of an entity but not the
+        // part identifying it produced a record that is refused at publication
+        // for exactly that property -- so it is reported here instead, where it
+        // still names a row someone can go and look at.
+        if (!itemChanges.some(hasValue)) {
+          continue
         }
+        const missing = mandatoryOf(itemSchema).find(
+          (p) => !itemChanges.some((c) => c.property === p.uid && hasValue(c))
+        )
+        if (missing) {
+          errors.push(mkIncompleteError(itemSchema, missing))
+          continue
+        }
+        addedEntities.push({
+          kind: "owned" as const,
+          ownedEntity: getBlank(itemSchema.name),
+          changes: itemChanges
+        })
       }
       return addedEntities.length === 0
         ? []
