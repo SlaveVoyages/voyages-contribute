@@ -961,12 +961,24 @@ export const foldCombinedChanges = (
     }
   }
   // Validate changes: ensure non-nullables are set.
+  //
+  // What "set" means depends on what the update is. A new entity is described
+  // entirely by its changes -- there is no row behind it -- so every mandatory
+  // property has to appear among them or the record cannot be written.
+  //
+  // An update to an existing entity is a partial description of a row that is
+  // already there and already satisfies its own NOT NULL columns. Demanding
+  // every mandatory property again would mean no one could correct a single
+  // field without restating the rest, and it reported values as missing that
+  // were sitting in the database, correct, all along. What can still go wrong
+  // is a change that empties one, so that is what is checked.
   const validation: ValidationResult[] = []
   for (const u of finalUpdates.values()) {
     const schema = SchemaIndex[u.entityRef.schema]
     if (!schema) {
       continue
     }
+    const isNew = u.entityRef.type === "new"
     schema.properties.forEach((p) => {
       if (
         p.kind === "table" ||
@@ -976,16 +988,22 @@ export const foldCombinedChanges = (
         return
       }
       const mandatory: boolean = !!(p as any).notNull
-      if (
-        mandatory &&
-        !u.changes.some(
-          (c) => c.property === p.backingField && c.changed !== null
-        )
-      ) {
+      if (!mandatory) {
+        return
+      }
+      const changes = u.changes.filter((c) => c.property === p.backingField)
+      const missing = isNew
+        ? !changes.some((c) => c.changed !== null)
+        : // Only an explicit clearing. Saying nothing about a property leaves
+          // the stored value standing, which is the whole point of an update.
+          changes.length > 0 && changes.every((c) => c.changed === null)
+      if (missing) {
         validation.push({
           kind: "error",
           entityRef: u.entityRef,
-          message: `Property '${p.label}' is required but not set.`,
+          message: isNew
+            ? `Property '${p.label}' is required but not set.`
+            : `Property '${p.label}' is required and cannot be cleared.`,
           tag: u.tag
         })
       }
