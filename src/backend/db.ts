@@ -694,6 +694,35 @@ export class DatabaseService {
       if (missing.length > 0) {
         return { error: `Contribution(s) not found: ${missing.join(", ")}` }
       }
+      // A settled contribution does not belong to a batch's future.
+      //
+      // Published is the serious one: a batch's contributions are the record of
+      // what it published, and that batch now carries a timestamp and a
+      // publisher. Moving one out leaves a published batch attributed to
+      // somebody for work it no longer contains, and moving one in makes an
+      // unpublished batch look as though it holds published work. Nothing
+      // records where it came from, so neither is reversible.
+      //
+      // Rejected cannot publish either, so assigning one only inflates the
+      // batch's count with work that will never go out.
+      //
+      // Applies to clearing an assignment as much as to setting one -- the
+      // record is lost either way.
+      const settled = contributions.filter(
+        (c) =>
+          c.status === ContributionStatus.Published ||
+          c.status === ContributionStatus.Rejected
+      )
+      if (settled.length > 0) {
+        const describe = settled
+          .map((c) => `${c.id} (${ContributionStatus[c.status]})`)
+          .join(", ")
+        return {
+          error:
+            "Published and rejected contributions cannot be moved between " +
+            `batches: ${describe}`
+        }
+      }
       // If batchId is provided, verify the batch exists
       let batch: PublicationBatchEntity | null = null
       if (batchId !== null) {

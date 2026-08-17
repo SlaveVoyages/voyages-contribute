@@ -33,6 +33,7 @@ import {
   hasEditorRole,
   requireEditor
 } from "./authz"
+import { checkSubmissionReadiness } from "./submissionReadiness"
 import { areMatch, isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
@@ -727,6 +728,16 @@ app.patch(
       }
       if (verdict.kind === "noop") {
         res.json(existing)
+        return
+      }
+
+      // Checked after entitlement, so what a contribution is missing is only
+      // ever reported to someone entitled to see it. Submitting asserts the
+      // work is ready, and this is where that claim is tested — publication is
+      // too late, since by then it is Accepted and read-only.
+      const refusal = checkSubmissionReadiness(existing, status)
+      if (refusal) {
+        res.status(400).json(refusal)
         return
       }
 
