@@ -27,13 +27,12 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
+import { authorIdentity, hasEditorRole, requireEditor } from "./authz"
 import {
-  authorIdentity,
-  decideStatusChange,
-  hasEditorRole,
-  requireEditor
-} from "./authz"
-import { checkSubmissionReadiness } from "./submissionReadiness"
+  changeManyStatuses,
+  changeOneStatus,
+  planBulkStatus
+} from "./statusChange"
 import { areMatch, isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
@@ -659,25 +658,50 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
   }
 })
 
+// The statuses a request may ask for. Publication is reached this way too, so
+// it is on the list; what stands in front of each of them is `decideStatusChange`.
+const DECIDABLE_STATUSES = [
+  ContributionStatus.Published,
+  ContributionStatus.Accepted,
+  ContributionStatus.Submitted,
+  ContributionStatus.Rejected
+]
+
+const invalidStatus = (status: unknown) =>
+  typeof status !== "number" || !DECIDABLE_STATUSES.includes(status)
+
+const INVALID_STATUS_BODY = {
+  error: "Invalid status",
+  details: "Status value must be one of: Published, Accepted, Submitted, Rejected"
+}
+
+const statusChangeDeps = {
+  getContribution: (id: string) => dbService.getContribution(id),
+  changeContributionStatus: (
+    id: string,
+    from: ContributionStatus,
+    to: ContributionStatus,
+    decisionComments: string | null | undefined,
+    decidedBy?: string | null
+  ) =>
+    dbService.changeContributionStatus(
+      id,
+      from,
+      to,
+      decisionComments,
+      decidedBy
+    )
+}
+
 // Change contribution status
 app.patch(
   "/contributions/:id/change_status",
   authenticateJWT,
   async (req, res) => {
     try {
-      const { status, decisionComments } = req.body
-      if (
-        typeof status !== "number" ||
-        (status !== ContributionStatus.Published &&
-          status !== ContributionStatus.Accepted &&
-          status !== ContributionStatus.Submitted &&
-          status !== ContributionStatus.Rejected)
-      ) {
-        res.status(400).json({
-          error: "Invalid status",
-          details:
-            "Status value must be one of: Published, Accepted, Submitted, Rejected"
-        })
+      const { status } = req.body
+      if (invalidStatus(status)) {
+        res.status(400).json(INVALID_STATUS_BODY)
         return
       }
       // The id is still read from the body, as before, but it is no longer
@@ -692,78 +716,25 @@ app.patch(
         })
         return
       }
-      const existing = await dbService.getContribution(
-        req.body.id ?? req.params.id
+      const result = await changeOneStatus(
+        {
+          id: req.body.id ?? req.params.id,
+          to: status,
+          // Read off the body rather than destructured, so that a key that is
+          // present and undefined is still absent, which is what it means.
+          ...("decisionComments" in req.body
+            ? { decisionComments: req.body.decisionComments }
+            : {}),
+          isEditor: hasEditorRole((req as any).user?.app_metadata),
+          identity: getAuthorIdentity(req) ?? null
+        },
+        statusChangeDeps
       )
-      if (!existing) {
-        res.status(404).json({ error: "Contribution not found" })
+      if (result.kind === "refused") {
+        res.status(result.status).json(result.body)
         return
       }
-      const identity = getAuthorIdentity(req)
-      // A comment is absent, or it is supplied — including as null, which asks
-      // for the existing one to go. The two differ: absent leaves a repeated
-      // request with nothing to do, while an explicit null is a change.
-      const commentSupplied = decisionComments !== undefined
-      const suppliedComment = !commentSupplied
-        ? undefined
-        : decisionComments === null
-          ? null
-          : String(decisionComments)
-
-      const verdict = decideStatusChange({
-        isEditor: hasEditorRole((req as any).user?.app_metadata),
-        isAuthor:
-          !!identity &&
-          authorIdentity(existing.changeSet?.author ?? "") === identity,
-        from: existing.status,
-        to: status,
-        commentSupplied
-      })
-      if (verdict.kind === "refuse") {
-        res.status(verdict.status).json({
-          error: verdict.error,
-          ...(verdict.details ? { details: verdict.details } : {})
-        })
-        return
-      }
-      if (verdict.kind === "noop") {
-        res.json(existing)
-        return
-      }
-
-      // Checked after entitlement, so what a contribution is missing is only
-      // ever reported to someone entitled to see it. Submitting asserts the
-      // work is ready, and this is where that claim is tested — publication is
-      // too late, since by then it is Accepted and read-only.
-      const refusal = checkSubmissionReadiness(existing, status)
-      if (refusal) {
-        res.status(400).json(refusal)
-        return
-      }
-
-      // A comment explains one decision, so it does not outlive it: moving to
-      // a different status without supplying a new one clears it. Carrying it
-      // over would show the reason a contribution was rejected as though it
-      // were the note on its acceptance, or on the resubmission that followed.
-      const updatedContribution = await dbService.changeContributionStatus(
-        existing.id,
-        existing.status,
-        status,
-        suppliedComment,
-        // The verified identity from the token, not anything the body claimed —
-        // this is the record of who decided, so it has to come from the same
-        // place the authorization decision did.
-        identity
-      )
-      if (!updatedContribution) {
-        res.status(409).json({
-          error: "Contribution status changed",
-          details:
-            "Someone else decided this contribution while you were working on it. Reload it and try again."
-        })
-        return
-      }
-      res.json(updatedContribution)
+      res.json(result.contribution)
     } catch (error) {
       console.error(
         `Error changing status for contribution ${req.params.id}:`,
@@ -776,6 +747,43 @@ app.patch(
     }
   }
 )
+
+app.patch("/contributions/bulk-status", authenticateJWT, async (req, res) => {
+  try {
+    const { contributionIds, status, decisionComments } = req.body
+    if (invalidStatus(status)) {
+      res.status(400).json(INVALID_STATUS_BODY)
+      return
+    }
+    const plan = planBulkStatus(contributionIds)
+    if (plan.kind === "refused") {
+      res.status(plan.status).json(plan.body)
+      return
+    }
+    const outcome = await changeManyStatuses(
+      {
+        ids: plan.ids,
+        to: status,
+        decisionComments,
+        commentSupplied: "decisionComments" in req.body,
+        isEditor: hasEditorRole((req as any).user?.app_metadata),
+        identity: getAuthorIdentity(req) ?? null
+      },
+      statusChangeDeps
+    )
+    // 200 whatever the mix. The request itself was well formed and every
+    // contribution in it was answered; a status code cannot carry "834 of
+    // these worked", and picking one for the failures would tell a client
+    // that nothing landed when most of it did.
+    res.json(outcome)
+  } catch (error) {
+    console.error("Error changing status for multiple contributions:", error)
+    res.status(500).json({
+      error: "Failed to change contribution status",
+      details: (error as Error).message
+    })
+  }
+})
 
 // Add review to contribution
 // Reviewing is an editorial act, so the role is what stands in front of it.
