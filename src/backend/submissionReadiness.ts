@@ -3,6 +3,7 @@ import {
   UpdateConflict,
   ValidationResult
 } from "../models/changeSets"
+import { PropertyAccessLevel } from "../models/properties"
 import {
   combineContributionChanges,
   Contribution,
@@ -29,21 +30,47 @@ export interface SubmissionRefusal {
 }
 
 /**
- * Which status changes are checked.
+ * Which status changes are checked, and how much of the fold each one answers
+ * for.
  *
- * Only leaving WorkInProgress. Submitting asserts the work is ready to be
- * reviewed, so that is the claim worth testing. An editor reopening a decided
- * contribution also moves it to Submitted, and that move exists precisely to
- * get an invalid contribution back to where it can be repaired — checking it
- * would shut the door it opens. Nothing else changes what the contribution
- * says, so nothing else is worth folding.
+ * Two moments, because two different people are being held to the work.
+ *
+ * Submitting asserts a contributor has finished what is theirs to finish, so it
+ * is checked — but only against the properties they could actually reach. A
+ * mandatory property marked Editor-only is not one a contributor can supply;
+ * holding their submission to it leaves them at a form demanding a value it
+ * will not show them, with no way forward.
+ *
+ * Accepting is the editor saying the contribution is fit to publish, and by
+ * then every property has somebody who can reach it. So that is where the whole
+ * fold is answered for — and it has to be, because acceptance is the last point
+ * at which anyone can still edit it. Publication is too late: an accepted
+ * contribution is read-only.
+ *
+ * An editor reopening a decided contribution moves it to Submitted, and that
+ * move exists precisely to get an invalid contribution back to where it can be
+ * repaired — checking it would shut the door it opens.
  */
 export const submissionIsChecked = (
   from: ContributionStatus,
   to: ContributionStatus
 ): boolean =>
-  to === ContributionStatus.Submitted &&
-  from === ContributionStatus.WorkInProgress
+  (to === ContributionStatus.Submitted &&
+    from === ContributionStatus.WorkInProgress) ||
+  to === ContributionStatus.Accepted
+
+/**
+ * The highest access level a contributor can choose on the form. Anything above
+ * it is not theirs to fill in.
+ */
+const CONTRIBUTOR_CEILING = PropertyAccessLevel.AdvancedContributor
+
+/** Only acceptance answers for properties the contributor could not reach. */
+const answersForEveryProperty = (to: ContributionStatus): boolean =>
+  to === ContributionStatus.Accepted
+
+const isContributorReachable = (v: ValidationResult): boolean =>
+  v.accessLevel === undefined || v.accessLevel <= CONTRIBUTOR_CEILING
 
 const countOf = (n: number, singular: string, plural: string) =>
   `${n} ${n === 1 ? singular : plural}`
@@ -68,7 +95,12 @@ export const checkSubmissionReadiness = (
       label: String(contribution.id)
     }
   ])
-  const errors = validation.filter((v) => v.kind === "error")
+  // What this move answers for. A submission is held to the contributor's own
+  // work; an acceptance is held to all of it.
+  const answerable = answersForEveryProperty(to)
+    ? validation
+    : validation.filter(isContributorReachable)
+  const errors = answerable.filter((v) => v.kind === "error")
   if (errors.length === 0 && conflicts.length === 0) {
     return null
   }
@@ -78,11 +110,16 @@ export const checkSubmissionReadiness = (
     conflicts.length > 0 &&
       countOf(conflicts.length, "conflicting value", "conflicting values")
   ].filter(Boolean)
+  // Said in terms of what the person in front of it just tried to do. An
+  // editor refused at acceptance did not submit anything, and telling them the
+  // contribution is "still yours to edit" describes somebody else's record.
+  const details = answersForEveryProperty(to)
+    ? "Fill these in on the contribution, then accept it again. Nothing was accepted, so it is still open for review."
+    : "Fill these in and submit again. Nothing was submitted, so the contribution is still yours to edit."
   return {
     conflicts,
-    validation,
+    validation: answerable,
     error: `This contribution has ${parts.join(" and ")}.`,
-    details:
-      "Fill these in and submit again. Nothing was submitted, so the contribution is still yours to edit."
+    details
   }
 }

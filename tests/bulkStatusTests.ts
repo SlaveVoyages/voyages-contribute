@@ -199,10 +199,9 @@ test("a contribution decided underneath the request is reported, not overwritten
  * check has to survive being asked for in bulk -- it is the last point at which
  * a contributor still owns an editable draft.
  */
-test("a draft missing a mandatory value is still refused in bulk", async () => {
+test("bulk submission and bulk acceptance are held to different things", async () => {
   const base = draft("incomplete", WorkInProgress, `Me <${CONTRIBUTOR}>`)
-  /** The same draft with one mandatory property never set. */
-  const incomplete: Contribution = {
+  const withoutDataset: Contribution = {
     ...base,
     changeSet: {
       ...base.changeSet,
@@ -210,16 +209,19 @@ test("a draft missing a mandatory value is still refused in bulk", async () => {
         change.type === "update"
           ? {
               ...change,
-              changes: change.changes.filter(
-                (c) => (c as any).property !== "Voyage_dataset"
+              changes: change.changes.map((c) =>
+                (c as any).property === "Voyage_dataset"
+                  ? { ...c, changed: null }
+                  : c
               )
             }
           : change
       )
     }
   }
-  const { deps } = storeOf([incomplete])
-  const outcome = await changeManyStatuses(
+
+  // The contributor submits: nothing here was theirs to fix.
+  const submitting = await changeManyStatuses(
     {
       ids: ["incomplete"],
       to: Submitted,
@@ -227,10 +229,19 @@ test("a draft missing a mandatory value is still refused in bulk", async () => {
       identity: CONTRIBUTOR,
       commentSupplied: false
     },
-    deps
+    storeOf([withoutDataset]).deps
   )
-  expect(outcome.changed).toEqual([])
-  expect(outcome.refused[0].status).toBe(400)
+  expect(submitting.refused).toEqual([])
+  expect(submitting.changed).toEqual(["incomplete"])
+
+  // The editor accepts in bulk: now the missing value has somebody who can
+  // reach it, and acceptance is the last moment anyone can.
+  const accepting = await changeManyStatuses(
+    { ids: ["incomplete"], to: Accepted, ...asEditor },
+    storeOf([withoutDataset]).deps
+  )
+  expect(accepting.changed).toEqual([])
+  expect(accepting.refused[0].status).toBe(400)
 })
 
 /**

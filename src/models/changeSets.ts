@@ -14,6 +14,7 @@ import {
   NumberProperty,
   OwnedEntityListProperty,
   Property,
+  PropertyAccessLevel,
   TableProperty,
   TextProperty
 } from "./properties"
@@ -904,6 +905,15 @@ export interface ValidationResult {
   entityRef: EntityRef
   message: string
   tag?: string
+  /**
+   * The access level of the property this is about, when it is about one.
+   *
+   * Carried so a caller can tell who was in a position to prevent it. A
+   * mandatory property that a contributor cannot reach is not something their
+   * submission can be held to -- but it is still missing, and whoever can
+   * reach it has to be held to it before the contribution is accepted.
+   */
+  accessLevel?: PropertyAccessLevel
 }
 
 export type FoldCombinedChangesResult = CombinedChangeSet & {
@@ -1004,7 +1014,8 @@ export const foldCombinedChanges = (
           message: isNew
             ? `Property '${p.label}' is required but not set.`
             : `Property '${p.label}' is required and cannot be cleared.`,
-          tag: u.tag
+          tag: u.tag,
+          accessLevel: p.accessLevel
         })
       }
     })
