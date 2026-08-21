@@ -13,9 +13,7 @@ import { MigrationInterface, QueryRunner, TableColumn } from "typeorm"
  * contribution's own author, say — would assert something untrue about the
  * historical record.
  *
- * Timestamps are `bigint` epoch milliseconds to match `changesets.timestamp`,
- * rather than the `varchar` that `publication_batches.published` uses. That
- * column's text affinity is a known wart; this does not copy it.
+ * Timestamps are `bigint` epoch milliseconds, matching `changesets.timestamp`.
  */
 export class RecordDecisionAuthors1786200000000 implements MigrationInterface {
   name = "RecordDecisionAuthors1786200000000"

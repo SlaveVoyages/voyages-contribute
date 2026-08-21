@@ -54,6 +54,14 @@ const setStatus = (id: string, status: ContributionStatus) =>
 const statusOf = async (id: string) =>
   (await AppDataSource.manager.findOneBy(ContributionEntity, { id }))?.status
 
+const batchOf = async (id: string) =>
+  (
+    await AppDataSource.manager.findOne(ContributionEntity, {
+      where: { id },
+      relations: ["batch"]
+    })
+  )?.batch?.id ?? null
+
 test("an epoch column answers with a number, whatever the driver hands back", () => {
   // sqlite returns these as numbers; TypeORM asks mysql2 for big numbers as
   // strings, so on MySQL the same column arrives as "1786200000000". The
@@ -186,4 +194,36 @@ test("what a published batch holds is fixed, and what an open one holds is not",
   )
   expect(await db.batchHasContributions(open.id)).toBe(false)
   expect(await db.deleteBatch(open.id)).toBe(true)
+})
+
+test("a batch id names a batch, clears the assignment, or is refused", async () => {
+  const batch = await db.createPublicationBatch({ title: "parsed", comments: "" })
+  await contribution("parse-me", ContributionStatus.Accepted)
+
+  // Nothing stands in for null. An absent id used to reach TypeORM as
+  // undefined, which drops the condition from the where clause and matched
+  // whichever batch came back first.
+  for (const bad of [undefined, "", "  ", "abc", 0, -1, 1.5, {}, [batch.id]]) {
+    expect(
+      await db.assignContributionToBatch("parse-me", bad as never),
+      JSON.stringify(bad ?? null)
+    ).toMatchObject({
+      error: expect.stringContaining("Invalid publication batch id")
+    })
+  }
+  expect(await batchOf("parse-me")).toBeNull()
+
+  // A numeric string names the batch it looks like, so a retry of the
+  // assignment it already has is not read as a move out of it.
+  for (const named of [batch.id, String(batch.id)]) {
+    expect(
+      await db.assignContributionToBatch("parse-me", named)
+    ).not.toHaveProperty("error")
+    expect(await batchOf("parse-me")).toBe(batch.id)
+  }
+
+  expect(await db.assignContributionToBatch("parse-me", null)).not.toHaveProperty(
+    "error"
+  )
+  expect(await batchOf("parse-me")).toBeNull()
 })

@@ -1433,8 +1433,11 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
       } catch (recordError) {
         // The publication itself already happened and cannot be taken back, so
         // refusing the caller here would cost them the status they asked for
-        // without undoing anything. What is lost is the whole record of it,
-        // which the next poll writes again.
+        // without undoing anything. The write is atomic, so what is lost is
+        // the whole record of it rather than half of one. Getting it back
+        // means publishing again, which upstream answers with the same
+        // publication: the response below still reports completion, so nothing
+        // polls a second time on its own.
         console.error("Error recording the publication:", recordError)
       }
     }

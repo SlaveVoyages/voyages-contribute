@@ -688,7 +688,9 @@ export class DatabaseService {
   // Assign contribution to batch (or clear assignment with null batch_id)
   async assignContributionToBatch(
     contributionId: string | string[],
-    batchId: number | null
+    // Taken as the request body had it, and parsed below: this is the boundary
+    // an id crosses, so it is where it becomes one.
+    batchId: number | string | null
   ): Promise<ContributionEntity | ContributionEntity[] | { error: string }> {
     const ids = Array.isArray(contributionId) ? contributionId : [contributionId]
     return await AppDataSource.transaction(async (manager) => {
@@ -703,12 +705,37 @@ export class DatabaseService {
       if (missing.length > 0) {
         return { error: `Contribution(s) not found: ${missing.join(", ")}` }
       }
-      // If batchId is provided, verify the batch exists
-      let batch: PublicationBatchEntity | null = null
+      // The body reaches here unparsed, so this is where a batch id becomes
+      // one. Absent, it used to arrive as undefined, which TypeORM drops from
+      // the where clause -- the lookup below then matched an arbitrary batch
+      // and the contribution was assigned to whichever came back. Arriving as
+      // a numeric string it was wrong differently: it compares unequal to the
+      // number the driver returns, so a request naming the batch a
+      // contribution is already in read as a move out of it.
+      //
+      // Only null asks for the assignment to be cleared. Nothing else stands
+      // in for it.
+      let target: number | null = null
       if (batchId !== null) {
-        batch = await manager.findOne(PublicationBatchEntity, { where: { id: batchId } })
+        const named =
+          typeof batchId === "number" || typeof batchId === "string"
+            ? Number(batchId)
+            : NaN
+        if (!Number.isInteger(named) || named <= 0) {
+          return {
+            error:
+              `Invalid publication batch id: ${JSON.stringify(batchId)}. ` +
+              "Name a batch, or null to clear the assignment."
+          }
+        }
+        target = named
+      }
+      // If a batch is named, verify it exists
+      let batch: PublicationBatchEntity | null = null
+      if (target !== null) {
+        batch = await manager.findOne(PublicationBatchEntity, { where: { id: target } })
         if (!batch) {
-          return { error: `Publication batch with ID ${batchId} not found` }
+          return { error: `Publication batch with ID ${target} not found` }
         }
       }
       // A request naming the batch a contribution is already in moves it
@@ -716,7 +743,7 @@ export class DatabaseService {
       // retry asking for the placement it already has is answered rather than
       // refused for a move it is not making.
       const moving = contributions.filter(
-        (c) => (c.batch?.id ?? null) !== batchId
+        (c) => (c.batch?.id ?? null) !== target
       )
       // What a published batch holds is the record of what it published, and it
       // carries a date and a publisher saying so. Moving work out credits that
@@ -761,7 +788,7 @@ export class DatabaseService {
       }
       // Update all contributions
       for (const c of contributions) {
-        if (batchId === null) {
+        if (target === null) {
           // Explicitly clear relation in DB
             c.batch = null
         } else {
