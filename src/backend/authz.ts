@@ -119,6 +119,26 @@ export const decideStatusChange = ({
     return { kind: "noop" }
   }
 
+  // Publication is not a status anybody sets. It is reached by publishing,
+  // which sends the work upstream and records what came back; moving a
+  // contribution here by hand would assert a publication that never happened,
+  // with nothing behind the assertion to contradict it.
+  //
+  // Saying it of a contribution that is already published is a different
+  // thing, and is how a decision comment is recorded against one.
+  if (
+    to === ContributionStatus.Published &&
+    from !== ContributionStatus.Published
+  ) {
+    return {
+      kind: "refuse",
+      status: 400,
+      error: "A contribution cannot be moved to Published",
+      details:
+        "Publish the contribution, or the batch holding it, and the status follows."
+    }
+  }
+
   if (isEditor) {
     return { kind: "apply" }
   }
@@ -132,7 +152,7 @@ export const decideStatusChange = ({
       kind: "refuse",
       status: 403,
       error: "Editor role required",
-      details: "Only an editor can accept, reject or publish a contribution."
+      details: "Only an editor can accept or reject a contribution."
     }
   }
   if (from !== ContributionStatus.WorkInProgress) {

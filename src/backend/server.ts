@@ -27,12 +27,12 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
+import { authorIdentity, hasEditorRole, requireEditor } from "./authz"
 import {
-  authorIdentity,
-  decideStatusChange,
-  hasEditorRole,
-  requireEditor
-} from "./authz"
+  changeManyStatuses,
+  changeOneStatus,
+  planBulkStatus
+} from "./statusChange"
 import { areMatch, isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
@@ -658,25 +658,54 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
   }
 })
 
+// The statuses a request may name. Published is one of them, but only of a
+// contribution that already is published: that is how a decision comment is
+// recorded against one, and how a client whose response was lost repeats
+// itself. Whether a particular move is allowed is `decideStatusChange`'s to
+// say, being the only thing here that knows where the contribution is coming
+// from.
+const DECIDABLE_STATUSES = [
+  ContributionStatus.Published,
+  ContributionStatus.Accepted,
+  ContributionStatus.Submitted,
+  ContributionStatus.Rejected
+]
+
+const invalidStatus = (status: unknown) =>
+  typeof status !== "number" || !DECIDABLE_STATUSES.includes(status)
+
+const INVALID_STATUS_BODY = {
+  error: "Invalid status",
+  details: "Status value must be one of: Published, Accepted, Submitted, Rejected"
+}
+
+const statusChangeDeps = {
+  getContribution: (id: string) => dbService.getContribution(id),
+  changeContributionStatus: (
+    id: string,
+    from: ContributionStatus,
+    to: ContributionStatus,
+    decisionComments: string | null | undefined,
+    decidedBy?: string | null
+  ) =>
+    dbService.changeContributionStatus(
+      id,
+      from,
+      to,
+      decisionComments,
+      decidedBy
+    )
+}
+
 // Change contribution status
 app.patch(
   "/contributions/:id/change_status",
   authenticateJWT,
   async (req, res) => {
     try {
-      const { status, decisionComments } = req.body
-      if (
-        typeof status !== "number" ||
-        (status !== ContributionStatus.Published &&
-          status !== ContributionStatus.Accepted &&
-          status !== ContributionStatus.Submitted &&
-          status !== ContributionStatus.Rejected)
-      ) {
-        res.status(400).json({
-          error: "Invalid status",
-          details:
-            "Status value must be one of: Published, Accepted, Submitted, Rejected"
-        })
+      const { status } = req.body
+      if (invalidStatus(status)) {
+        res.status(400).json(INVALID_STATUS_BODY)
         return
       }
       // The id is still read from the body, as before, but it is no longer
@@ -691,64 +720,25 @@ app.patch(
         })
         return
       }
-      const existing = await dbService.getContribution(
-        req.body.id ?? req.params.id
+      const result = await changeOneStatus(
+        {
+          id: req.body.id ?? req.params.id,
+          to: status,
+          // Read off the body rather than destructured, so that a key that is
+          // present and undefined is still absent, which is what it means.
+          ...("decisionComments" in req.body
+            ? { decisionComments: req.body.decisionComments }
+            : {}),
+          isEditor: hasEditorRole((req as any).user?.app_metadata),
+          identity: getAuthorIdentity(req) ?? null
+        },
+        statusChangeDeps
       )
-      if (!existing) {
-        res.status(404).json({ error: "Contribution not found" })
+      if (result.kind === "refused") {
+        res.status(result.status).json(result.body)
         return
       }
-      const identity = getAuthorIdentity(req)
-      // A comment is absent, or it is supplied — including as null, which asks
-      // for the existing one to go. The two differ: absent leaves a repeated
-      // request with nothing to do, while an explicit null is a change.
-      const commentSupplied = decisionComments !== undefined
-      const suppliedComment = !commentSupplied
-        ? undefined
-        : decisionComments === null
-          ? null
-          : String(decisionComments)
-
-      const verdict = decideStatusChange({
-        isEditor: hasEditorRole((req as any).user?.app_metadata),
-        isAuthor:
-          !!identity &&
-          authorIdentity(existing.changeSet?.author ?? "") === identity,
-        from: existing.status,
-        to: status,
-        commentSupplied
-      })
-      if (verdict.kind === "refuse") {
-        res.status(verdict.status).json({
-          error: verdict.error,
-          ...(verdict.details ? { details: verdict.details } : {})
-        })
-        return
-      }
-      if (verdict.kind === "noop") {
-        res.json(existing)
-        return
-      }
-
-      // A comment explains one decision, so it does not outlive it: moving to
-      // a different status without supplying a new one clears it. Carrying it
-      // over would show the reason a contribution was rejected as though it
-      // were the note on its acceptance, or on the resubmission that followed.
-      const updatedContribution = await dbService.changeContributionStatus(
-        existing.id,
-        existing.status,
-        status,
-        suppliedComment
-      )
-      if (!updatedContribution) {
-        res.status(409).json({
-          error: "Contribution status changed",
-          details:
-            "Someone else decided this contribution while you were working on it. Reload it and try again."
-        })
-        return
-      }
-      res.json(updatedContribution)
+      res.json(result.contribution)
     } catch (error) {
       console.error(
         `Error changing status for contribution ${req.params.id}:`,
@@ -761,6 +751,43 @@ app.patch(
     }
   }
 )
+
+app.patch("/contributions/bulk-status", authenticateJWT, async (req, res) => {
+  try {
+    const { contributionIds, status, decisionComments } = req.body
+    if (invalidStatus(status)) {
+      res.status(400).json(INVALID_STATUS_BODY)
+      return
+    }
+    const plan = planBulkStatus(contributionIds)
+    if (plan.kind === "refused") {
+      res.status(plan.status).json(plan.body)
+      return
+    }
+    const outcome = await changeManyStatuses(
+      {
+        ids: plan.ids,
+        to: status,
+        decisionComments,
+        commentSupplied: "decisionComments" in req.body,
+        isEditor: hasEditorRole((req as any).user?.app_metadata),
+        identity: getAuthorIdentity(req) ?? null
+      },
+      statusChangeDeps
+    )
+    // 200 whatever the mix. The request itself was well formed and every
+    // contribution in it was answered; a status code cannot carry "834 of
+    // these worked", and picking one for the failures would tell a client
+    // that nothing landed when most of it did.
+    res.json(outcome)
+  } catch (error) {
+    console.error("Error changing status for multiple contributions:", error)
+    res.status(500).json({
+      error: "Failed to change contribution status",
+      details: (error as Error).message
+    })
+  }
+})
 
 // Add review to contribution
 // Reviewing is an editorial act, so the role is what stands in front of it.
@@ -1171,6 +1198,37 @@ app.get("/batches/:filter", authenticateJWT, requireEditor, async (req, res) => 
   }
 })
 
+// How each status reads when explaining why a batch has nothing to publish.
+const CONTRIBUTION_STATUS_LABELS: Record<ContributionStatus, string> = {
+  [ContributionStatus.WorkInProgress]: "still being edited",
+  [ContributionStatus.Submitted]: "awaiting an editorial decision",
+  [ContributionStatus.Accepted]: "accepted",
+  [ContributionStatus.Rejected]: "rejected",
+  [ContributionStatus.Published]: "already published"
+}
+
+// Say what a batch actually holds, so "nothing to publish" arrives with the
+// reason attached instead of leaving the editor to go and look.
+const describeBatchComposition = (
+  counts: Partial<Record<ContributionStatus, number>>
+): string => {
+  const present = Object.entries(counts).filter(([, count]) => (count ?? 0) > 0)
+  if (present.length === 0) {
+    return "The batch is empty. Assign accepted contributions to it before publishing."
+  }
+  const total = present.reduce((sum, [, count]) => sum + (count ?? 0), 0)
+  const noun = total === 1 ? "contribution" : "contributions"
+  const label = (status: string) =>
+    CONTRIBUTION_STATUS_LABELS[Number(status) as ContributionStatus]
+  // One status reads better without repeating the count either side of the
+  // colon: "holds 1 contribution, still being edited".
+  const breakdown =
+    present.length === 1
+      ? `, ${label(present[0][0])}`
+      : `: ${present.map(([status, count]) => `${count} ${label(status)}`).join(", ")}`
+  return `The batch holds ${total} ${noun}${breakdown}. Only accepted contributions can be published.`
+}
+
 // Publish contributions or batches
 app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   try {
@@ -1200,9 +1258,19 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
         id,
         ContributionStatus.Accepted
       )
-      if (!batchContributions) {
-        res.status(404).json({
-          error: "Batch not found or no Accepted contributions are in the batch"
+      // `find` resolves to an array, so a missing batch and a batch with nothing
+      // accepted arrive here looking identical. They need different answers —
+      // one is a bad id, the other is work still to do — so ask which it is.
+      if (!batchContributions || batchContributions.length === 0) {
+        const batch = await dbService.getBatchById(id)
+        if (!batch) {
+          res.status(404).json({ error: "Batch not found" })
+          return
+        }
+        const counts = await dbService.getBatchContributionStatusCounts(id)
+        res.status(400).json({
+          error: "No accepted contributions found in batch",
+          details: describeBatchComposition(counts)
         })
         return
       }
@@ -1250,8 +1318,14 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
       }
       contributions = [contribution]
     }
+    // Batch mode reports this above with the batch composition attached; this
+    // stays as a backstop. Sent as an object, not a bare string — the client
+    // reads `error`/`details` off the body, and a string body silently
+    // degrades to a generic "Could not publish".
     if (contributions.length === 0) {
-      res.status(400).json("No accepted contributions found in batch")
+      res.status(400).json({
+        error: "No accepted contributions found in batch"
+      })
       return
     }
     // For each contribution we flatten the changeSet + reviews.
@@ -1305,6 +1379,19 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   }
 })
 
+// Publication keys are `${id}_${mode}`. Contribution ids are uuids, which carry
+// no underscore, so the `_batch` suffix identifies a batch run unambiguously.
+const batchIdFromPublicationKey = (publicationKey: string): number | null => {
+  const suffix = "_batch"
+  if (!publicationKey.endsWith(suffix)) {
+    return null
+  }
+  // `Number("")` is 0, so an id-less key would otherwise parse as batch 0.
+  const raw = publicationKey.slice(0, -suffix.length)
+  const batchId = Number(raw)
+  return raw !== "" && Number.isInteger(batchId) && batchId > 0 ? batchId : null
+}
+
 // Poll publication status
 app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, res) => {
   try {
@@ -1319,17 +1406,39 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
       Array.isArray(pubState.contribution_ids)
     ) {
       try {
-        // Update all published contributions to Published status in a single query
-        const updatedCount = await dbService.updateMultipleContributions(
+        // Moving the contributions is only half of it: until the batch itself
+        // carries a date it stays on the pending list, still offering a Publish
+        // button for work that is already out. Upstream publishes a batch all
+        // or none, so both halves are recorded together or not at all.
+        //
+        // The key is `${id}_${mode}` (see /publish), so a batch run is the one
+        // ending in `_batch`; a single contribution has no batch to stamp.
+        //
+        // Whoever's poll observed the completion is recorded as the publisher.
+        // Publication is a background job with no identity of its own, and this
+        // is the closest thing to a human decision it has: the editor who
+        // pressed Publish is the one whose client keeps polling it.
+        const batchId = batchIdFromPublicationKey(pub_id)
+        const { updated, stamped } = await dbService.recordPublication(
           pubState.contribution_ids,
-          { status: ContributionStatus.Published }
+          batchId,
+          getAuthorIdentity(req)
         )
         console.log(
-          `Successfully updated ${updatedCount} contributions to Published status`
+          `Successfully updated ${updated} contributions to Published status`
         )
-      } catch (updateError) {
-        console.error("Error updating contribution statuses:", updateError)
-        // Don't fail the entire request if status update fails, just log it
+        if (stamped) {
+          console.log(`Marked batch ${batchId} as published`)
+        }
+      } catch (recordError) {
+        // The publication itself already happened and cannot be taken back, so
+        // refusing the caller here would cost them the status they asked for
+        // without undoing anything. The write is atomic, so what is lost is
+        // the whole record of it rather than half of one. Getting it back
+        // means publishing again, which upstream answers with the same
+        // publication: the response below still reports completion, so nothing
+        // polls a second time on its own.
+        console.error("Error recording the publication:", recordError)
       }
     }
     res.status(pubRes.status).json(pubState)

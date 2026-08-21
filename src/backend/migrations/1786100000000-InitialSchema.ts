@@ -1,5 +1,8 @@
 import { MigrationInterface, QueryRunner, Table } from "typeorm"
 
+import { RecordDecisionAuthors1786200000000 } from "./1786200000000-RecordDecisionAuthors"
+import { PublishedAsEpochMillis1786300000000 } from "./1786300000000-PublishedAsEpochMillis"
+
 /**
  * The schema as it stood when migrations were introduced, reproducing what
  * `synchronize` built until then.
@@ -160,4 +163,12 @@ export class InitialSchema1786100000000 implements MigrationInterface {
 
 // Referenced by name so the bundler keeps it and the DataSource can list it
 // without a filesystem glob, which does not survive bundling.
-export const AllMigrations = [InitialSchema1786100000000]
+//
+// Run order comes from the class names rather than from this list: TypeORM
+// reads the last 13 characters of each one as a timestamp and sorts on that. A
+// migration added here runs last only if its name says so.
+export const AllMigrations = [
+  InitialSchema1786100000000,
+  RecordDecisionAuthors1786200000000,
+  PublishedAsEpochMillis1786300000000
+]

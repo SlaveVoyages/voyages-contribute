@@ -19,7 +19,10 @@ const distPkg = {
   version: pkg.version,
   description: pkg.description,
   main: "./index.js",
-  types: "./index.d.ts",
+  // The declarations now cover `src/models` and `src/impute`, so their common
+  // root is `src/` and they emit under `models/` and `impute/` rather than flat
+  // at the package root. The bundle entry is unchanged.
+  types: "./models/index.d.ts",
   author: pkg.author,
   license: pkg.license,
   repository: pkg.repository,
