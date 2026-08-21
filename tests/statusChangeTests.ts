@@ -52,28 +52,40 @@ test("a stranger learns nothing, whatever they ask", () => {
   }
 })
 
-test("an editor decides freely, and a repeat changes nothing", () => {
+test("an editor decides freely, but does not publish by hand", () => {
   for (const from of EVERY_STATUS) {
     for (const to of EVERY_STATUS) {
-      const verdict = decide("editor", from, to)
-      expect(verdict.kind).toBe(from === to ? "noop" : "apply")
+      // Published is the one status no role can move a contribution into:
+      // publishing is what puts it there, and saying so directly would assert
+      // a publication that never happened.
+      const expected =
+        from === to ? "noop" : to === Published ? "refuse" : "apply"
+      expect(decide("editor", from, to).kind).toBe(expected)
     }
   }
-  // A comment on the status it already has is a correction to that comment.
+  // A comment on the status it already has is a correction to that comment,
+  // and that holds for a published contribution as much as an accepted one.
   expect(decide("editor", Accepted, Accepted, true).kind).toBe("apply")
+  expect(decide("editor", Published, Published, true).kind).toBe("apply")
 })
 
 test("an author may submit their own draft, and nothing else", () => {
   expect(decide("author", WorkInProgress, Submitted).kind).toBe("apply")
 
   // Not onwards from a draft to a decision.
-  for (const to of [Accepted, Rejected, Published]) {
+  for (const to of [Accepted, Rejected]) {
     expect(decide("author", WorkInProgress, to)).toMatchObject({
       kind: "refuse",
       status: 403,
-      details: "Only an editor can accept, reject or publish a contribution."
+      details: "Only an editor can accept or reject a contribution."
     })
   }
+  // Publication is refused ahead of the role, because no role has it.
+  expect(decide("author", WorkInProgress, Published)).toMatchObject({
+    kind: "refuse",
+    status: 400,
+    error: "A contribution cannot be moved to Published"
+  })
 
   // Not backwards out of a decision. A published contribution has already
   // been applied upstream, and a rejected one cannot be edited first, so

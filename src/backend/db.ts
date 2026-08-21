@@ -28,6 +28,25 @@ import {
   ContributionStatus
 } from "../models/contribution"
 
+/**
+ * Epoch milliseconds, read back as the number they were written as.
+ *
+ * Drivers disagree about what a 64-bit integer is. TypeORM asks mysql2 for big
+ * numbers as strings, so a `bigint` column arrives as "1786200000000" there
+ * and as a number on sqlite, while the interfaces below declare `number` and
+ * are read by callers who have no reason to ask which database answered. One
+ * of them builds a Date out of it, and `new Date("1786200000000")` is an
+ * Invalid Date.
+ *
+ * Storing the digits was never the problem -- a decimal string round-trips an
+ * integer exactly. Only the type coming back is.
+ */
+const epochMilliseconds = {
+  to: (value: number | null | undefined) => value,
+  from: (value: string | number | null): number | null =>
+    value === null || value === undefined ? null : Number(value)
+}
+
 // Entities that map to our interfaces.
 
 @Entity("changesets")
@@ -44,7 +63,7 @@ export class ChangeSetEntity implements ChangeSet {
   @Column({ type: "varchar" })
   comments!: string
 
-  @Column("bigint")
+  @Column({ type: "bigint", transformer: epochMilliseconds })
   timestamp!: number
 
   @Column("simple-json")
@@ -62,7 +81,7 @@ export class PublicationBatchEntity implements PublicationBatch {
   @Column({ type: "varchar" })
   comments!: string
 
-  @Column({ type: "varchar", nullable: true })
+  @Column({ type: "bigint", nullable: true, transformer: epochMilliseconds })
   published!: number | null
 
   @Column({ type: "varchar", nullable: true })
@@ -155,7 +174,7 @@ export class ContributionEntity implements Contribution {
   @Column({ type: "varchar", nullable: true })
   decidedBy?: string | null
 
-  @Column({ type: "bigint", nullable: true })
+  @Column({ type: "bigint", nullable: true, transformer: epochMilliseconds })
   decidedAt?: number | null
 }
 
@@ -553,20 +572,6 @@ export class DatabaseService {
     return this.getContribution(id)
   }
 
-  async updateMultipleContributions(
-    ids: string[],
-    data: Partial<Contribution>
-  ): Promise<number> {
-    if (ids.length === 0) {
-      return 0
-    }
-    const result = await this.contributionRepo.update(
-      { id: In(ids) }, 
-      data as Partial<ContributionEntity>
-    )
-    return result.affected || 0
-  }
-
   async addMediaToContribution(
     contributionId: string,
     mediaData: ContributionMedia
@@ -687,41 +692,16 @@ export class DatabaseService {
   ): Promise<ContributionEntity | ContributionEntity[] | { error: string }> {
     const ids = Array.isArray(contributionId) ? contributionId : [contributionId]
     return await AppDataSource.transaction(async (manager) => {
-      // Fetch all contributions requested
-      const contributions = await manager.findBy(ContributionEntity, { id: In(ids) })
+      // Each contribution is fetched with the batch it currently sits in, which
+      // is one of the two a move can disturb.
+      const contributions = await manager.find(ContributionEntity, {
+        where: { id: In(ids) },
+        relations: ["batch"]
+      })
       const foundIds = new Set(contributions.map((c) => c.id))
       const missing = ids.filter((i) => !foundIds.has(i))
       if (missing.length > 0) {
         return { error: `Contribution(s) not found: ${missing.join(", ")}` }
-      }
-      // A settled contribution does not belong to a batch's future.
-      //
-      // Published is the serious one: a batch's contributions are the record of
-      // what it published, and that batch now carries a timestamp and a
-      // publisher. Moving one out leaves a published batch attributed to
-      // somebody for work it no longer contains, and moving one in makes an
-      // unpublished batch look as though it holds published work. Nothing
-      // records where it came from, so neither is reversible.
-      //
-      // Rejected cannot publish either, so assigning one only inflates the
-      // batch's count with work that will never go out.
-      //
-      // Applies to clearing an assignment as much as to setting one -- the
-      // record is lost either way.
-      const settled = contributions.filter(
-        (c) =>
-          c.status === ContributionStatus.Published ||
-          c.status === ContributionStatus.Rejected
-      )
-      if (settled.length > 0) {
-        const describe = settled
-          .map((c) => `${c.id} (${ContributionStatus[c.status]})`)
-          .join(", ")
-        return {
-          error:
-            "Published and rejected contributions cannot be moved between " +
-            `batches: ${describe}`
-        }
       }
       // If batchId is provided, verify the batch exists
       let batch: PublicationBatchEntity | null = null
@@ -729,6 +709,54 @@ export class DatabaseService {
         batch = await manager.findOne(PublicationBatchEntity, { where: { id: batchId } })
         if (!batch) {
           return { error: `Publication batch with ID ${batchId} not found` }
+        }
+      }
+      // A request naming the batch a contribution is already in moves it
+      // nowhere, so there is nothing to guard. Assignment is retried, and a
+      // retry asking for the placement it already has is answered rather than
+      // refused for a move it is not making.
+      const moving = contributions.filter(
+        (c) => (c.batch?.id ?? null) !== batchId
+      )
+      // What a published batch holds is the record of what it published, and it
+      // carries a date and a publisher saying so. Moving work out credits that
+      // publisher for work the batch no longer contains; moving work in makes
+      // them the publisher of work that never went out. Nothing records where a
+      // contribution came from, so neither can be undone.
+      //
+      // Both ends are checked, because a move disturbs the batch it leaves as
+      // much as the one it joins.
+      const frozen = new Map<number, PublicationBatchEntity>()
+      if (batch?.published != null && moving.length > 0) {
+        frozen.set(batch.id, batch)
+      }
+      for (const c of moving) {
+        if (c.batch?.published != null) {
+          frozen.set(c.batch.id, c.batch)
+        }
+      }
+      if (frozen.size > 0) {
+        const describe = [...frozen.values()]
+          .map((b) => `${b.id} ("${b.title}")`)
+          .join(", ")
+        return {
+          error:
+            "Contributions cannot be moved into or out of a published " +
+            `batch: ${describe}`
+        }
+      }
+      // Asked of the contribution as well as of the batch, because a batch
+      // cannot always answer for it. Work published on its own carries no
+      // batch to be stamped, and would otherwise be free to join one and be
+      // counted among what that batch published.
+      const alreadyOut = moving.filter(
+        (c) => c.status === ContributionStatus.Published
+      )
+      if (alreadyOut.length > 0) {
+        return {
+          error:
+            "Published contributions cannot be moved between batches: " +
+            alreadyOut.map((c) => c.id).join(", ")
         }
       }
       // Update all contributions
@@ -807,22 +835,77 @@ export class DatabaseService {
   // batch would erase the original date.
   //
   // Returns whether this call was the one that stamped it.
-  async markBatchPublished(
+  private async stampBatch(
+    manager: EntityManager,
     batchId: number,
-    publishedBy?: string | null,
-    publishedAt: number = Date.now()
+    publishedBy: string | null,
+    publishedAt: number
   ): Promise<boolean> {
-    const result = await this.batchRepository
+    const result = await manager
       .createQueryBuilder()
       .update(PublicationBatchEntity)
       // Written together with the timestamp and under the same guard, so the
       // pair is always consistent: a batch never carries a publication date
       // with someone else's name, or a name with no date.
-      .set({ published: publishedAt, publishedBy: publishedBy ?? null })
+      .set({ published: publishedAt, publishedBy })
       .where("id = :batchId", { batchId })
       .andWhere("published IS NULL")
       .execute()
     return (result.affected ?? 0) > 0
+  }
+
+  async markBatchPublished(
+    batchId: number,
+    publishedBy?: string | null,
+    publishedAt: number = Date.now()
+  ): Promise<boolean> {
+    return await this.stampBatch(
+      AppDataSource.manager,
+      batchId,
+      publishedBy ?? null,
+      publishedAt
+    )
+  }
+
+  // Record a completed publication: the contributions it covered become
+  // Published, and the batch that held them is stamped.
+  //
+  // One write, because upstream publishes a batch all or none and what is
+  // recorded here has to say the same thing. Split, a batch holds published
+  // work while claiming never to have published it -- it stays on the pending
+  // list offering to publish work that is already out, and the name of whoever
+  // published it is gone. Nothing reconciles the halves afterwards: the poll
+  // that would is only made while somebody is still watching.
+  //
+  // Work published on its own has no batch, so `batchId` is null and there is
+  // nothing to stamp.
+  async recordPublication(
+    contributionIds: string[],
+    batchId: number | null,
+    publishedBy?: string | null,
+    publishedAt: number = Date.now()
+  ): Promise<{ updated: number; stamped: boolean }> {
+    return await AppDataSource.transaction(async (manager) => {
+      let updated = 0
+      if (contributionIds.length > 0) {
+        const result = await manager.update(
+          ContributionEntity,
+          { id: In(contributionIds) },
+          { status: ContributionStatus.Published }
+        )
+        updated = result.affected ?? 0
+      }
+      const stamped =
+        batchId === null
+          ? false
+          : await this.stampBatch(
+            manager,
+            batchId,
+            publishedBy ?? null,
+            publishedAt
+          )
+      return { updated, stamped }
+    })
   }
 
   async updateBatch(

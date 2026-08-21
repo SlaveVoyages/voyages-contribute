@@ -50,14 +50,20 @@ export interface SubmissionRefusal {
  * An editor reopening a decided contribution moves it to Submitted, and that
  * move exists precisely to get an invalid contribution back to where it can be
  * repaired — checking it would shut the door it opens.
+ *
+ * A request that leaves the status where it already is answers for nothing: all
+ * it carries is a decision comment. Holding one to the fold refuses an editor
+ * annotating a contribution accepted long ago, and tells them nothing was
+ * accepted when something was.
  */
 export const submissionIsChecked = (
   from: ContributionStatus,
   to: ContributionStatus
 ): boolean =>
-  (to === ContributionStatus.Submitted &&
+  from !== to &&
+  ((to === ContributionStatus.Submitted &&
     from === ContributionStatus.WorkInProgress) ||
-  to === ContributionStatus.Accepted
+    to === ContributionStatus.Accepted)
 
 /**
  * The highest access level a contributor can choose on the form. Anything above

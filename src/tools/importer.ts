@@ -436,7 +436,10 @@ export const MapRow = async (
           ...(await processMapping(nestedMapping, ownedSchema, localContext))
         )
       }
-      return ownedChanges.length === 0
+      // Worth bringing into being only if what the row said carries a value.
+      // A count says only that columns were considered, which is the question
+      // the list branch stopped asking.
+      return !ownedChanges.some(hasValue)
         ? []
         : [
           {

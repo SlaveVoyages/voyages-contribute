@@ -152,8 +152,13 @@ test("reopening an invalid contribution is not blocked by its own invalidity", (
 test("leaving a draft, and accepting, are the moves that are checked", () => {
   for (const from of EVERY_STATUS) {
     for (const to of EVERY_STATUS) {
+      // A status that does not move answers for nothing -- all such a request
+      // carries is a decision comment. An editor annotating a contribution
+      // accepted long ago is not accepting it again, and holding them to the
+      // fold would tell them nothing was accepted when something was.
       const expected =
-        (from === WorkInProgress && to === Submitted) || to === Accepted
+        from !== to &&
+        ((from === WorkInProgress && to === Submitted) || to === Accepted)
       expect(submissionIsChecked(from, to)).toBe(expected)
       if (!expected) {
         // Nothing else folds, so a contribution moves as it always did.

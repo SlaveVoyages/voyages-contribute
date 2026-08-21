@@ -658,8 +658,12 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
   }
 })
 
-// The statuses a request may ask for. Publication is reached this way too, so
-// it is on the list; what stands in front of each of them is `decideStatusChange`.
+// The statuses a request may name. Published is one of them, but only of a
+// contribution that already is published: that is how a decision comment is
+// recorded against one, and how a client whose response was lost repeats
+// itself. Whether a particular move is allowed is `decideStatusChange`'s to
+// say, being the only thing here that knows where the contribution is coming
+// from.
 const DECIDABLE_STATUSES = [
   ContributionStatus.Published,
   ContributionStatus.Accepted,
@@ -1402,43 +1406,36 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
       Array.isArray(pubState.contribution_ids)
     ) {
       try {
-        // Update all published contributions to Published status in a single query
-        const updatedCount = await dbService.updateMultipleContributions(
-          pubState.contribution_ids,
-          { status: ContributionStatus.Published }
-        )
-        console.log(
-          `Successfully updated ${updatedCount} contributions to Published status`
-        )
-      } catch (updateError) {
-        console.error("Error updating contribution statuses:", updateError)
-        // Don't fail the entire request if status update fails, just log it
-      }
-      try {
         // Moving the contributions is only half of it: until the batch itself
         // carries a date it stays on the pending list, still offering a Publish
-        // button for work that is already out.
+        // button for work that is already out. Upstream publishes a batch all
+        // or none, so both halves are recorded together or not at all.
         //
         // The key is `${id}_${mode}` (see /publish), so a batch run is the one
         // ending in `_batch`; a single contribution has no batch to stamp.
+        //
+        // Whoever's poll observed the completion is recorded as the publisher.
+        // Publication is a background job with no identity of its own, and this
+        // is the closest thing to a human decision it has: the editor who
+        // pressed Publish is the one whose client keeps polling it.
         const batchId = batchIdFromPublicationKey(pub_id)
-        if (batchId !== null) {
-          // Whoever's poll observed the completion is recorded as the publisher.
-          // Publication is a background job with no identity of its own, and
-          // this is the closest thing to a human decision it has: the editor who
-          // pressed Publish is the one whose client keeps polling it.
-          const stamped = await dbService.markBatchPublished(
-            batchId,
-            getAuthorIdentity(req)
-          )
-          if (stamped) {
-            console.log(`Marked batch ${batchId} as published`)
-          }
+        const { updated, stamped } = await dbService.recordPublication(
+          pubState.contribution_ids,
+          batchId,
+          getAuthorIdentity(req)
+        )
+        console.log(
+          `Successfully updated ${updated} contributions to Published status`
+        )
+        if (stamped) {
+          console.log(`Marked batch ${batchId} as published`)
         }
-      } catch (batchError) {
-        // Same reasoning as above — this is bookkeeping, and losing it must not
-        // cost the caller the status it asked for.
-        console.error("Error marking batch as published:", batchError)
+      } catch (recordError) {
+        // The publication itself already happened and cannot be taken back, so
+        // refusing the caller here would cost them the status they asked for
+        // without undoing anything. What is lost is the whole record of it,
+        // which the next poll writes again.
+        console.error("Error recording the publication:", recordError)
       }
     }
     res.status(pubRes.status).json(pubState)
