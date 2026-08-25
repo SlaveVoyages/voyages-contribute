@@ -262,6 +262,18 @@ export const voyageMapping: DataMapping = {
         },
         {
           kind: "linked",
+          targetField: "Third port of intended disembarkation",
+          header: "arrport3",
+          lookupField: "Code"
+        },
+        {
+          kind: "linked",
+          targetField: "Fourth port of intended disembarkation",
+          header: "arrport4",
+          lookupField: "Code"
+        },
+        {
+          kind: "linked",
           targetField: "Port of vessel's departure",
           header: "portdep",
           lookupField: "Code"
@@ -1180,6 +1192,145 @@ export const voyageMapping: DataMapping = {
       ]
     },
 
+
+
+    // African info
+    //
+    // An owned list like cargo, but each entry is a single lookup, so one
+    // column is enough. Only one slot for now: the column Daniel's list names
+    // is `afrinfo`, singular, and no CSV we have carries more than one.
+    {
+      kind: "ownedList",
+      targetField: "African info",
+      addedToList: [
+        {
+          kind: "owned",
+          importUpdates: [
+            {
+              kind: "linked",
+              targetField: "African info",
+              header: "afrinfo",
+              lookupField: "Name"
+            }
+          ]
+        }
+      ]
+    },
+
+    // Voyage cargo
+    //
+    // A voyage carries any number of cargo entries, and each one needs three
+    // columns rather than the single column a source or an owner takes: what it
+    // was, the unit it was measured in, how much, and whether it went towards
+    // buying people. A spreadsheet cannot hold
+    // a list, so the columns are fixed slots in the same lettered style the rest
+    // of the template uses -- cargotypea/cargounita/cargocounta and so on.
+    //
+    // Ten slots. That is the most any voyage in the database carries: 3,918
+    // voyages have cargo, 57% of them a single entry, and none more than ten.
+    // The limit is the spreadsheet's alone; the form imposes none.
+    {
+      kind: "multiple",
+      bindings: [
+        {
+          $cargoType: "cargotypea",
+          $cargoUnit: "cargounita",
+          $cargoCount: "cargocounta",
+          $cargoPurchase: "cargoa"
+        },
+        {
+          $cargoType: "cargotypeb",
+          $cargoUnit: "cargounitb",
+          $cargoCount: "cargocountb",
+          $cargoPurchase: "cargob"
+        },
+        {
+          $cargoType: "cargotypec",
+          $cargoUnit: "cargounitc",
+          $cargoCount: "cargocountc",
+          $cargoPurchase: "cargoc"
+        },
+        {
+          $cargoType: "cargotyped",
+          $cargoUnit: "cargounitd",
+          $cargoCount: "cargocountd",
+          $cargoPurchase: "cargod"
+        },
+        {
+          $cargoType: "cargotypee",
+          $cargoUnit: "cargounite",
+          $cargoCount: "cargocounte",
+          $cargoPurchase: "cargoe"
+        },
+        {
+          $cargoType: "cargotypef",
+          $cargoUnit: "cargounitf",
+          $cargoCount: "cargocountf",
+          $cargoPurchase: "cargof"
+        },
+        {
+          $cargoType: "cargotypeg",
+          $cargoUnit: "cargounitg",
+          $cargoCount: "cargocountg",
+          $cargoPurchase: "cargog"
+        },
+        {
+          $cargoType: "cargotypeh",
+          $cargoUnit: "cargounith",
+          $cargoCount: "cargocounth",
+          $cargoPurchase: "cargoh"
+        },
+        {
+          $cargoType: "cargotypei",
+          $cargoUnit: "cargouniti",
+          $cargoCount: "cargocounti",
+          $cargoPurchase: "cargoi"
+        },
+        {
+          $cargoType: "cargotypej",
+          $cargoUnit: "cargounitj",
+          $cargoCount: "cargocountj",
+          $cargoPurchase: "cargoj"
+        }
+      ],
+      mappings: [
+        {
+          kind: "ownedList",
+          targetField: "Cargo",
+          addedToList: [
+            {
+              kind: "owned",
+              importUpdates: [
+                {
+                  kind: "linked",
+                  targetField: "Cargo type",
+                  header: "$cargoType",
+                  lookupField: "Name"
+                },
+                {
+                  kind: "linked",
+                  targetField: "Cargo unit",
+                  header: "$cargoUnit",
+                  lookupField: "Name"
+                },
+                {
+                  kind: "direct",
+                  targetField: "The amount of cargo according to the unit",
+                  header: "$cargoCount"
+                },
+                {
+                  kind: "direct",
+                  targetField:
+                    "Was this a commodity used to purchase enslaved people",
+                  header: "$cargoPurchase"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+
     // Generate EnslaverRelationship changes with deeply nested entries for
     // each Enslaver with its role. Both aliases and identities are created if no
     // match is EntityNotFoundError.
@@ -1203,6 +1354,8 @@ export const voyageMapping: DataMapping = {
         "ownern",
         "ownero",
         "ownerp",
+        "ownerq",
+        "ownerr",
         "captaina",
         "captainb",
         "captainc"
@@ -1286,6 +1439,14 @@ export const voyageMapping: DataMapping = {
                     },
                     {
                       $enslaver: "ownerp",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerq",
+                      $enslaverRoleId: "4"
+                    },
+                    {
+                      $enslaver: "ownerr",
                       $enslaverRoleId: "4"
                     },
                     {
