@@ -108,3 +108,40 @@ test("connection links that cannot be null say so", () => {
   })
   expect(nullable).toEqual([])
 })
+
+/**
+ * A linked property writes a foreign key column, and Django names those
+ * `<relation>_id` -- none of the models these schemas back override
+ * `db_column`. Naming the relation instead reads fine, because the fetch
+ * endpoint translates a name it does not recognise, and fails on write, where
+ * a primary key cannot be assigned to a relation.
+ */
+test("every linked property names a column, not the relation", () => {
+  const relations: string[] = []
+  for (const schema of AllSchemas) {
+    for (const p of schema.properties) {
+      if (p.kind === "linkedEntity" && !p.backingField.endsWith("_id")) {
+        relations.push(`${schema.name}.${p.backingField}`)
+      }
+    }
+  }
+  expect(relations).toEqual([])
+})
+
+/**
+ * A stored changeset names the property it changes by uid, so a uid is a value
+ * already written down elsewhere rather than a label free to follow its field.
+ * These two were derived from a backing field that has since been corrected,
+ * and they keep the derivation in force when those changes were written.
+ */
+test("uids that stored changesets depend on do not move", () => {
+  const uidOf = (schemaName: string, label: string) =>
+    getSchema(schemaName).properties.find((p) => p.label === label)?.uid
+  expect({
+    grouping: uidOf("Voyage", "Voyage grouping"),
+    date: uidOf("Voyage Source", "Date")
+  }).toEqual({
+    grouping: "Voyage_voyage_groupings",
+    date: "Voyage Source_date"
+  })
+})

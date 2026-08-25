@@ -1581,7 +1581,12 @@ export const VoyageSourceSchema = mkBuilder({
   .addLinkedEntity({
     label: "Date",
     description: "Date of publication or authorship",
-    backingField: "date",
+    backingField: "date_id",
+    // Pinned to what it was when this named the relation rather than the
+    // column. Stored changesets reference properties by uid, so deriving a new
+    // one from the corrected backing field would strand every change already
+    // written against this property.
+    uid: "Voyage Source_date",
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own
   })
@@ -1650,7 +1655,12 @@ export const VoyageSchema = mkBuilder({
   })
   .addLinkedEntity({
     label: "Voyage grouping",
-    backingField: "voyage_groupings",
+    backingField: "voyage_groupings_id",
+    // Pinned to what it was when this named the relation rather than the
+    // column. Stored changesets reference properties by uid, so deriving a new
+    // one from the corrected backing field would strand every change already
+    // written against this property.
+    uid: "Voyage_voyage_groupings",
     linkedEntitySchema: VoyageGroupingSchema,
     mode: EntityLinkEditMode.Select,
     notNull: false,
