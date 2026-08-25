@@ -84,3 +84,27 @@ test("fields appear in the order the spec lists them", () => {
   }
   expect(inversions).toEqual([])
 })
+
+/**
+ * A connection row exists to state one link. The column holding that link is
+ * NOT NULL in every case here -- a ManyToManyField's auto-created table, or a
+ * ForeignKey declared without `null=True` -- so a row without it is refused at
+ * publication. The schema has to refuse it first, or an import writes records
+ * that can never be published and a form accepts entries that can never be
+ * saved.
+ */
+test("connection links that cannot be null say so", () => {
+  const required = [
+    ["VoyageCargoConnectionSchema", "cargo_id"],
+    ["VoyageAfricanInfoConnectionSchema", "africaninfo_id"],
+    ["Voyage Source Connection", "source_id"],
+    ["EnslaverRelationRoleConn", "enslaverrole_id"]
+  ]
+  const nullable = required.filter(([schemaName, backingField]) => {
+    const prop = getSchema(schemaName).properties.find(
+      (p) => p.backingField === backingField
+    )
+    return !(prop as { notNull?: boolean } | undefined)?.notNull
+  })
+  expect(nullable).toEqual([])
+})
