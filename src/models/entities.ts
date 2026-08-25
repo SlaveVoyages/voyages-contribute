@@ -975,7 +975,10 @@ export const VoyageAfricanInfoConnectionSchema = mkBuilder({
     backingField: "africaninfo_id",
     label: "African info",
     linkedEntitySchema: AfricanInfoSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    // The connection is the statement that this voyage carried captives so
+    // described. Without the description it states nothing.
+    notNull: true
   })
   .build()
 
@@ -1019,7 +1022,10 @@ export const VoyageCargoConnectionSchema = mkBuilder({
     backingField: "cargo_id",
     label: "Cargo type",
     linkedEntitySchema: CargoTypeSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    // What is being carried is what makes a cargo record a record: an amount
+    // or a unit on its own describes nothing.
+    notNull: true
   })
   .addNumber({
     backingField: "amount",
@@ -1404,7 +1410,9 @@ export const EnslaverRelationRoleConnectionSchema = mkBuilder({
     backingField: "enslaverrole_id",
     linkedEntitySchema: EnslaverRoleSchema,
     label: "Role",
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    // The row says one thing: which role. There is no such row without it.
+    notNull: true
   })
   .build()
 

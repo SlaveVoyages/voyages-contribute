@@ -22,6 +22,18 @@ const extractSourcePrefixes =
       : null
   }
 
+/**
+ * Rows of `past_enslavementrelationtype` and `past_enslaverrole`, referenced
+ * by primary key. A voyage puts people aboard a ship, which is a
+ * Transportation relation; the people the owner columns name are its
+ * investors, and the ones the captain columns name its captains.
+ *
+ * Role ids travel through binding variables, so they are written as strings.
+ */
+const TRANSPORTATION_RELATION = 2
+const CAPTAIN_ROLE = "1"
+const INVESTOR_ROLE = "2"
+
 // Main voyage mapping: configure this to map CSV rows to ChangeSets.
 export const voyageMapping: DataMapping = {
   kind: "conditional",
@@ -258,6 +270,18 @@ export const voyageMapping: DataMapping = {
           kind: "linked",
           targetField: "Second port of intended disembarkation",
           header: "arrport2",
+          lookupField: "Code"
+        },
+        {
+          kind: "linked",
+          targetField: "Third port of intended disembarkation",
+          header: "arrport3",
+          lookupField: "Code"
+        },
+        {
+          kind: "linked",
+          targetField: "Fourth port of intended disembarkation",
+          header: "arrport4",
           lookupField: "Code"
         },
         {
@@ -1180,6 +1204,128 @@ export const voyageMapping: DataMapping = {
       ]
     },
 
+
+
+    // African info
+    //
+    // An owned list like cargo, but each entry is a single lookup, so one
+    // column is enough. Only one slot for now: the column Daniel's list names
+    // is `afrinfo`, singular, and no CSV we have carries more than one.
+    {
+      kind: "ownedList",
+      targetField: "African info",
+      addedToList: [
+        {
+          kind: "owned",
+          importUpdates: [
+            {
+              kind: "linked",
+              targetField: "African info",
+              header: "afrinfo",
+              lookupField: "Name"
+            }
+          ]
+        }
+      ]
+    },
+
+    // Voyage cargo
+    //
+    // A voyage carries any number of cargo entries, and each one needs three
+    // columns rather than the single column a source or an owner takes: what it
+    // was, the unit it was measured in, and how much. A spreadsheet cannot hold
+    // a list, so the columns are fixed slots in the same lettered style the rest
+    // of the template uses -- cargotypea/cargounita/cargocounta and so on.
+    //
+    // Ten slots. That is the most any voyage in the database carries: 3,918
+    // voyages have cargo, 57% of them a single entry, and none more than ten.
+    // The limit is the spreadsheet's alone; the form imposes none.
+    {
+      kind: "multiple",
+      bindings: [
+        {
+          $cargoType: "cargotypea",
+          $cargoUnit: "cargounita",
+          $cargoCount: "cargocounta"
+        },
+        {
+          $cargoType: "cargotypeb",
+          $cargoUnit: "cargounitb",
+          $cargoCount: "cargocountb"
+        },
+        {
+          $cargoType: "cargotypec",
+          $cargoUnit: "cargounitc",
+          $cargoCount: "cargocountc"
+        },
+        {
+          $cargoType: "cargotyped",
+          $cargoUnit: "cargounitd",
+          $cargoCount: "cargocountd"
+        },
+        {
+          $cargoType: "cargotypee",
+          $cargoUnit: "cargounite",
+          $cargoCount: "cargocounte"
+        },
+        {
+          $cargoType: "cargotypef",
+          $cargoUnit: "cargounitf",
+          $cargoCount: "cargocountf"
+        },
+        {
+          $cargoType: "cargotypeg",
+          $cargoUnit: "cargounitg",
+          $cargoCount: "cargocountg"
+        },
+        {
+          $cargoType: "cargotypeh",
+          $cargoUnit: "cargounith",
+          $cargoCount: "cargocounth"
+        },
+        {
+          $cargoType: "cargotypei",
+          $cargoUnit: "cargouniti",
+          $cargoCount: "cargocounti"
+        },
+        {
+          $cargoType: "cargotypej",
+          $cargoUnit: "cargounitj",
+          $cargoCount: "cargocountj"
+        }
+      ],
+      mappings: [
+        {
+          kind: "ownedList",
+          targetField: "Cargo",
+          addedToList: [
+            {
+              kind: "owned",
+              importUpdates: [
+                {
+                  kind: "linked",
+                  targetField: "Cargo type",
+                  header: "$cargoType",
+                  lookupField: "Name"
+                },
+                {
+                  kind: "linked",
+                  targetField: "Cargo unit",
+                  header: "$cargoUnit",
+                  lookupField: "Name"
+                },
+                {
+                  kind: "direct",
+                  targetField: "The amount of cargo according to the unit",
+                  header: "$cargoCount"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+
     // Generate EnslaverRelationship changes with deeply nested entries for
     // each Enslaver with its role. Both aliases and identities are created if no
     // match is EntityNotFoundError.
@@ -1203,6 +1349,8 @@ export const voyageMapping: DataMapping = {
         "ownern",
         "ownero",
         "ownerp",
+        "ownerq",
+        "ownerr",
         "captaina",
         "captainb",
         "captainc"
@@ -1219,86 +1367,94 @@ export const voyageMapping: DataMapping = {
                   kind: "const",
                   targetField: "Relation type",
                   mode: "linked",
-                  value: 1 // 1 => Transportation
+                  value: TRANSPORTATION_RELATION
                 },
                 {
                   kind: "multiple",
                   bindings: [
                     {
                       $enslaver: "ownera",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerb",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerc",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerd",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownere",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerf",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerg",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerh",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "owneri",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerj",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerk",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerl",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerm",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownern",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownero",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerp",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
+                    },
+                    {
+                      $enslaver: "ownerq",
+                      $enslaverRoleId: INVESTOR_ROLE
+                    },
+                    {
+                      $enslaver: "ownerr",
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "captaina",
-                      $enslaverRoleId: "1"
+                      $enslaverRoleId: CAPTAIN_ROLE
                     },
                     {
                       $enslaver: "captainb",
-                      $enslaverRoleId: "1"
+                      $enslaverRoleId: CAPTAIN_ROLE
                     },
                     {
                       $enslaver: "captainc",
-                      $enslaverRoleId: "1"
+                      $enslaverRoleId: CAPTAIN_ROLE
                     }
                   ],
                   mappings: [
