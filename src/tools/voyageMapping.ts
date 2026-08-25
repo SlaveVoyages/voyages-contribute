@@ -1221,8 +1221,7 @@ export const voyageMapping: DataMapping = {
     //
     // A voyage carries any number of cargo entries, and each one needs three
     // columns rather than the single column a source or an owner takes: what it
-    // was, the unit it was measured in, how much, and whether it went towards
-    // buying people. A spreadsheet cannot hold
+    // was, the unit it was measured in, and how much. A spreadsheet cannot hold
     // a list, so the columns are fixed slots in the same lettered style the rest
     // of the template uses -- cargotypea/cargounita/cargocounta and so on.
     //
@@ -1235,62 +1234,52 @@ export const voyageMapping: DataMapping = {
         {
           $cargoType: "cargotypea",
           $cargoUnit: "cargounita",
-          $cargoCount: "cargocounta",
-          $cargoPurchase: "cargoa"
+          $cargoCount: "cargocounta"
         },
         {
           $cargoType: "cargotypeb",
           $cargoUnit: "cargounitb",
-          $cargoCount: "cargocountb",
-          $cargoPurchase: "cargob"
+          $cargoCount: "cargocountb"
         },
         {
           $cargoType: "cargotypec",
           $cargoUnit: "cargounitc",
-          $cargoCount: "cargocountc",
-          $cargoPurchase: "cargoc"
+          $cargoCount: "cargocountc"
         },
         {
           $cargoType: "cargotyped",
           $cargoUnit: "cargounitd",
-          $cargoCount: "cargocountd",
-          $cargoPurchase: "cargod"
+          $cargoCount: "cargocountd"
         },
         {
           $cargoType: "cargotypee",
           $cargoUnit: "cargounite",
-          $cargoCount: "cargocounte",
-          $cargoPurchase: "cargoe"
+          $cargoCount: "cargocounte"
         },
         {
           $cargoType: "cargotypef",
           $cargoUnit: "cargounitf",
-          $cargoCount: "cargocountf",
-          $cargoPurchase: "cargof"
+          $cargoCount: "cargocountf"
         },
         {
           $cargoType: "cargotypeg",
           $cargoUnit: "cargounitg",
-          $cargoCount: "cargocountg",
-          $cargoPurchase: "cargog"
+          $cargoCount: "cargocountg"
         },
         {
           $cargoType: "cargotypeh",
           $cargoUnit: "cargounith",
-          $cargoCount: "cargocounth",
-          $cargoPurchase: "cargoh"
+          $cargoCount: "cargocounth"
         },
         {
           $cargoType: "cargotypei",
           $cargoUnit: "cargouniti",
-          $cargoCount: "cargocounti",
-          $cargoPurchase: "cargoi"
+          $cargoCount: "cargocounti"
         },
         {
           $cargoType: "cargotypej",
           $cargoUnit: "cargounitj",
-          $cargoCount: "cargocountj",
-          $cargoPurchase: "cargoj"
+          $cargoCount: "cargocountj"
         }
       ],
       mappings: [
@@ -1317,12 +1306,6 @@ export const voyageMapping: DataMapping = {
                   kind: "direct",
                   targetField: "The amount of cargo according to the unit",
                   header: "$cargoCount"
-                },
-                {
-                  kind: "direct",
-                  targetField:
-                    "Was this a commodity used to purchase enslaved people",
-                  header: "$cargoPurchase"
                 }
               ]
             }

@@ -490,9 +490,20 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
         const csvHeadersNotInMapping = csvHeaders.filter(
           (h) => !mappingHeaders.has(h)
         )
-        const mappingHeadersNotInCsv = [...mappingHeaders].filter(
-          (h) => !csvSet.has(h)
+        // The frontend builds the downloadable template out of this list --
+        // it inspects an empty CSV so that every column comes back "missing" --
+        // so present it in template order rather than mapping-walk order.
+        // Anything the order does not name keeps its walk position at the end.
+        const orderIndex = new Map(
+          (mappingEntry.templateColumnOrder ?? []).map((h, i) => [h, i])
         )
+        const mappingHeadersNotInCsv = [...mappingHeaders]
+          .filter((h) => !csvSet.has(h))
+          .sort(
+            (a, b) =>
+              (orderIndex.get(a) ?? Number.MAX_SAFE_INTEGER) -
+              (orderIndex.get(b) ?? Number.MAX_SAFE_INTEGER)
+          )
         res.status(200).json({
           entityName,
           csvHeadersNotInMapping,
