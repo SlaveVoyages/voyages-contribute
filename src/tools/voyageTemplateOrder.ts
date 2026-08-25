@@ -13,7 +13,10 @@
  *    `CARGO` gets no column: Daniel confirmed on 24 Aug that it heads the three
  *    variables under it, the way `Ship:` heads the vessel fields, rather than
  *    holding a value of its own.
- *  - `voycount` follows `voyageid`. The importer accepts it; his list omits it.
+ *  - `voycount` follows `voyageid`. Daniel's list omits it, but the mapping
+ *    names it among the columns it ignores, so it reaches the template and
+ *    needs a position of its own. Whatever an editor writes there is
+ *    discarded on import.
  *
  * This list must name exactly the headers the mapping produces, no more and no
  * fewer. `voyageTemplateOrderTests.ts` fails the build if the two drift apart,
