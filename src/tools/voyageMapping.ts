@@ -22,6 +22,18 @@ const extractSourcePrefixes =
       : null
   }
 
+/**
+ * Rows of `past_enslavementrelationtype` and `past_enslaverrole`, referenced
+ * by primary key. A voyage puts people aboard a ship, which is a
+ * Transportation relation; the people the owner columns name are its
+ * investors, and the ones the captain columns name its captains.
+ *
+ * Role ids travel through binding variables, so they are written as strings.
+ */
+const TRANSPORTATION_RELATION = 2
+const CAPTAIN_ROLE = "1"
+const INVESTOR_ROLE = "2"
+
 // Main voyage mapping: configure this to map CSV rows to ChangeSets.
 export const voyageMapping: DataMapping = {
   kind: "conditional",
@@ -1355,94 +1367,94 @@ export const voyageMapping: DataMapping = {
                   kind: "const",
                   targetField: "Relation type",
                   mode: "linked",
-                  value: 1 // 1 => Transportation
+                  value: TRANSPORTATION_RELATION
                 },
                 {
                   kind: "multiple",
                   bindings: [
                     {
                       $enslaver: "ownera",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerb",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerc",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerd",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownere",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerf",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerg",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerh",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "owneri",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerj",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerk",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerl",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerm",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownern",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownero",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerp",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerq",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "ownerr",
-                      $enslaverRoleId: "4"
+                      $enslaverRoleId: INVESTOR_ROLE
                     },
                     {
                       $enslaver: "captaina",
-                      $enslaverRoleId: "1"
+                      $enslaverRoleId: CAPTAIN_ROLE
                     },
                     {
                       $enslaver: "captainb",
-                      $enslaverRoleId: "1"
+                      $enslaverRoleId: CAPTAIN_ROLE
                     },
                     {
                       $enslaver: "captainc",
-                      $enslaverRoleId: "1"
+                      $enslaverRoleId: CAPTAIN_ROLE
                     }
                   ],
                   mappings: [

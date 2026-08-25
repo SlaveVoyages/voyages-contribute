@@ -1,7 +1,7 @@
 import { expect, test } from "vitest"
 import { voyageMapping } from "../src/tools/voyageMapping"
 import { EntitySchema, VoyageSchema, getSchema } from "../src/models/entities"
-import { DataMapping } from "../src/tools/importer"
+import { DataMapping, EntityLookUp, MapRow } from "../src/tools/importer"
 
 /**
  * A mapping's `targetField` is a property *label*, resolved at run time by
@@ -157,4 +157,69 @@ test("voyage mapping resolves against the schemas", () => {
   // A header cannot be both consumed and declared ignored.
   const both = [...ignored].filter((h) => headers.has(h))
   expect(both).toEqual([])
+})
+
+/**
+ * The relation type and the roles are foreign keys written as literals, so
+ * nothing about the mapping says whether the number picked is the row meant.
+ * `past_enslavementrelationtype` reads 1 Transaction, 2 Transportation, and
+ * `past_enslaverrole` reads 1 Captain, 2 Investor, 3 Buyer, 4 Seller, 5 Owner.
+ * A voyage carries people, so the relation is Transportation, and the columns
+ * named for owners hold the people the database calls investors -- 57,446 of
+ * them against 122 sellers, none of whom appear in a transportation relation.
+ */
+
+/** Resolves anything, and records what was asked of each lookup table. */
+const recordingLookup = () => {
+  const asked: { schema: string; value: string }[] = []
+  const lookup: EntityLookUp = {
+    lookup: async (schema, _field, value) => {
+      asked.push({ schema: schema.name, value: String(value) })
+      return {
+        entityRef: { type: "existing", schema: schema.name, id: value },
+        state: "original",
+        data: {},
+        lookupValue: String(value)
+      } as any
+    }
+  }
+  const idsFor = (schema: string) => [
+    ...new Set(asked.filter((a) => a.schema === schema).map((a) => a.value))
+  ]
+  return { lookup, idsFor }
+}
+
+const rolesAskedFor = async (column: string) => {
+  const { lookup, idsFor } = recordingLookup()
+  await MapRow(
+    { voyageid: "1", [column]: "Amsterdam, Jan van" },
+    voyageMapping,
+    VoyageSchema,
+    lookup,
+    []
+  )
+  return {
+    roles: idsFor("EnslaverRole"),
+    relationTypes: idsFor("EnslavementRelationType")
+  }
+}
+
+test("every enslaver column asks for the role the database gives that name", async () => {
+  const owners = "abcdefghijklmnopqr".split("").map((s) => `owner${s}`)
+  for (const column of owners) {
+    const { roles, relationTypes } = await rolesAskedFor(column)
+    expect({ column, roles, relationTypes }).toEqual({
+      column,
+      roles: ["2"],
+      relationTypes: ["2"]
+    })
+  }
+  for (const column of ["captaina", "captainb", "captainc"]) {
+    const { roles, relationTypes } = await rolesAskedFor(column)
+    expect({ column, roles, relationTypes }).toEqual({
+      column,
+      roles: ["1"],
+      relationTypes: ["2"]
+    })
+  }
 })
