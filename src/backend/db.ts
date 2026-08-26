@@ -180,7 +180,36 @@ export class ContributionEntity implements Contribution {
 
 // Database connection
 
-const DB_TYPE = process.env.CONTRIB_DB_TYPE || "sqlite"
+export type DbType = "sqlite" | "mysql"
+
+const DB_TYPES: DbType[] = ["sqlite", "mysql"]
+
+/**
+ * Required rather than defaulted. Sqlite creates whatever file it is pointed
+ * at, so a default would let a deployment that meant to reach MySQL come up
+ * healthy against a new empty file, serving none of the data it was configured
+ * for. Refusing to start is the louder of the two failures.
+ *
+ * An empty value counts as unset, because PowerShell keeps `$env:X = ""` as a
+ * defined variable.
+ */
+export const readDbType = (raw: string | undefined): DbType => {
+  const value = raw?.trim() ?? ""
+  if (value === "") {
+    throw new Error(
+      `CONTRIB_DB_TYPE must be set to one of ${DB_TYPES.join(" | ")}.`
+    )
+  }
+  const type = DB_TYPES.find((candidate) => candidate === value)
+  if (!type) {
+    throw new Error(
+      `CONTRIB_DB_TYPE must be one of ${DB_TYPES.join(" | ")}; got "${raw}".`
+    )
+  }
+  return type
+}
+
+const DB_TYPE = readDbType(process.env.CONTRIB_DB_TYPE)
 
 const sharedOptions = {
   // Schemas come from migrations in every environment, so that the one the
