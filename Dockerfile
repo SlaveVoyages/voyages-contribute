@@ -18,6 +18,11 @@ RUN npm run build-server
 
 # Production stage
 FROM node:slim
+
+# CONTRIB_DB_TYPE is deliberately absent: the image refuses to start until a
+# deployment names the database it means to open, so that one which meant to
+# reach MySQL cannot come up against an empty local file instead. The path
+# below applies only once a deployment has asked for sqlite.
 ENV CONTRIB_DB_PATH=/etc/data/contrib.db
 ENV MEDIA_UPLOAD_FOLDER=/etc/data/uploads
 ENV NODE_ENV=production
@@ -46,7 +51,7 @@ EXPOSE 3000
 # Use non-root user for better security
 USER node
 
-# Volume for SQLite database persistence
+# Uploaded media, and the sqlite database when a deployment asks for one
 VOLUME /etc/data
 
 # Set the command to run your application

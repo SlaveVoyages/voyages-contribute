@@ -1,5 +1,8 @@
 import { expect, test } from "vitest"
-import { readMigrationMode } from "../src/backend/schema"
+
+process.env.CONTRIB_DB_TYPE = "sqlite"
+
+const { readMigrationMode } = await import("../src/backend/schema")
 
 /**
  * The mode decides whether a starting server may write to the schema, so an
