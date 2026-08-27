@@ -145,3 +145,31 @@ test("uids that stored changesets depend on do not move", () => {
     date: "Voyage Source_date"
   })
 })
+
+/**
+ * Two properties may share a backing field -- a foreign key is often worth both
+ * a picker and the raw id behind it -- but only one can be on the form, or the
+ * contributor gets two ways to write one column and nothing saying which wins.
+ * `Hidden` is what takes the second off every form, editors' included, so that
+ * is what counts here as resolved.
+ */
+test("no backing field is writable from two places on the form", () => {
+  const visible = (p: { accessLevel?: PropertyAccessLevel }) =>
+    (p.accessLevel ?? PropertyAccessLevel.BeginnerContributor) <
+    PropertyAccessLevel.Hidden
+  const collisions: string[] = []
+  for (const schema of AllSchemas) {
+    const byField = new Map<string, string[]>()
+    for (const prop of schema.properties) {
+      const field = (prop as { backingField?: string }).backingField
+      if (!field || !visible(prop)) continue
+      byField.set(field, [...(byField.get(field) ?? []), prop.label])
+    }
+    for (const [field, labels] of byField) {
+      if (labels.length > 1) {
+        collisions.push(`${schema.name}.${field}: ${labels.join(", ")}`)
+      }
+    }
+  }
+  expect(collisions).toEqual([])
+})

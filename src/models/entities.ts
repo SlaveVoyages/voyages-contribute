@@ -240,14 +240,33 @@ export const VoyageShipEntitySchema = mkBuilder({
   })
   .build()
 
+/** The first of `labels` the contributor filled in, or "unknown". */
+const portName = (
+  data: Record<string, { data: { Name?: string } } | undefined>,
+  ...labels: string[]
+) => labels.map((l) => data[l]?.data.Name).find(Boolean) ?? "unknown"
+
 export const VoyageItinerarySchema = mkBuilder({
   name: "VoyageItinerary",
   backingTable: "voyage_voyageitinerary",
   pkField: "id",
   contributionMode: "Owned",
+  /**
+   * Named from whichever port the contributor actually gave.
+   *
+   * Only the intended first ports were read, so a voyage recorded the way
+   * sources usually give one -- principal port filled in, intended first blank
+   * -- was labelled "Itinerary from unknown" in the Preview box and the changes
+   * list. Intended first still wins where given, being the itinerary as
+   * planned; "unknown" now means neither was recorded.
+   */
   getLabel: (data) =>
-    `Itinerary from ${data["First port of intended embarkation"]?.data.Name ?? "unknown"} to ` +
-    (data["First port of intended disembarkation"]?.data.Name ?? "unknown")
+    `Itinerary from ${portName(data, "First port of intended embarkation", "Principal port of embarkation")} to ` +
+    portName(
+      data,
+      "First port of intended disembarkation",
+      "Principal port of disembarkation"
+    )
 })
   .addLinkedEntity({
     linkedEntitySchema: Location,
@@ -1596,10 +1615,19 @@ export const VoyageSourceSchema = mkBuilder({
     linkedEntitySchema: VoyageShortRefSchema,
     mode: EntityLinkEditMode.Select
   })
+  // The same column the picker above writes, exposed as a raw integer. It is
+  // `document_shortref`'s primary key, so it is settled by choosing a short
+  // reference and is not a value anyone types -- offering both put two ways to
+  // write one column on the form, with nothing saying which one wins.
+  //
+  // Hidden rather than Editor, and rather than deleted. No one edits a key by
+  // hand, editors included; and stored changesets reference properties by uid,
+  // so removing it would strand every change already written against this one.
   .addNumber({
     label: "Short reference id",
     backingField: "short_ref_id",
-    uid: "voyage_source_numeric_short_ref_id"
+    uid: "voyage_source_numeric_short_ref_id",
+    accessLevel: PropertyAccessLevel.Hidden
   })
   .addText({
     label: "Notes",
