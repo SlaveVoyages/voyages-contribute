@@ -255,6 +255,16 @@ app.get("/", (_, res) => {
 const DEFAULT_LIMIT = 10
 const MAX_LIMIT = 500
 
+/** The columns `listContributions` can actually order by. */
+const SORTABLE_COLUMNS = [
+  "author",
+  "timestamp",
+  "comments",
+  "status",
+  "id"
+] as const
+type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
+
 const getPaginationArgs = (req: any) => {
   const rawPage = req.query.page ? parseInt(req.query.page as string) : 1
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
@@ -265,8 +275,13 @@ const getPaginationArgs = (req: any) => {
     Number.isFinite(rawLimit) && rawLimit > 0
       ? Math.min(rawLimit, MAX_LIMIT)
       : DEFAULT_LIMIT
-  const sortBy = (req.query.sortBy as "author" | "timestamp" | "id") || "id"
-  const sortOrder = (req.query.sortOrder as "ASC" | "DESC") || "ASC"
+  // Anything else falls back to "id" rather than reaching the query, so an
+  // unknown column name orders by something stable instead of throwing.
+  const sortBy = SORTABLE_COLUMNS.includes(req.query.sortBy as SortableColumn)
+    ? (req.query.sortBy as SortableColumn)
+    : "id"
+  const sortOrder: "ASC" | "DESC" =
+    req.query.sortOrder === "DESC" ? "DESC" : "ASC"
   return { page, limit, sortBy, sortOrder }
 }
 

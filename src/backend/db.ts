@@ -362,7 +362,7 @@ export class DatabaseService {
       rootId?: string | number
       /** Schema of the root entity, within which its id is unique. */
       rootSchema?: string
-      sortBy?: "author" | "timestamp" | "id"
+      sortBy?: "author" | "timestamp" | "comments" | "status" | "id"
       sortOrder?: "ASC" | "DESC"
     } = {}
   ): Promise<{
@@ -480,12 +480,23 @@ export class DatabaseService {
       )
     }
 
-    // Build order clause
+    // Build order clause.
+    //
+    // Only real columns are offered. A caller can ask to order by the voyage a
+    // contribution is rooted at, or by what kind of contribution it is, but
+    // both of those live inside `root`, a simple-json column: ordering by it
+    // sorts the serialised text, which puts "10" before "9" and groups by
+    // whichever key JSON.stringify happened to emit first. That is not the
+    // order anyone asked for, so it is not offered rather than answered wrong.
     const order: any = {}
     if (sortBy === "author") {
       order.changeSet = { author: sortOrder }
     } else if (sortBy === "timestamp") {
       order.changeSet = { timestamp: sortOrder }
+    } else if (sortBy === "comments") {
+      order.changeSet = { comments: sortOrder }
+    } else if (sortBy === "status") {
+      order.status = sortOrder
     }
     // Add secondary sort
     order.id = "ASC"
