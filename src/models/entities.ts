@@ -1506,10 +1506,25 @@ export const EnslavementRelationSchema = mkBuilder({
   backingTable: "past_enslavementrelation",
   contributionMode: "Owned",
   pkField: "id",
-  getLabel: (d, short) =>
-    short
-      ? (d["Relation type"]?.data["Relation type"] ?? "")
-      : `${d["Relation type"]?.data["Relation type"]} relation (id ${d.id})`
+  /**
+   * The id is only mentioned once there is one.
+   *
+   * `data.id` is where `entityFetch` puts the primary key of a row it read, so
+   * a relation still being drafted in a contribution has none -- it is not in
+   * the table yet. Interpolating it regardless labelled every new relation
+   * "Transportation relation (id undefined)", which reads as a fault in a
+   * relation that is simply unsaved. The relation type gets the same treatment
+   * for the same reason: it is chosen on the form, and until it is chosen there
+   * is nothing to name.
+   */
+  getLabel: (d, short) => {
+    const type = d["Relation type"]?.data["Relation type"]
+    if (short) {
+      return type ?? ""
+    }
+    const name = type ? `${type} relation` : "Enslavement relation"
+    return d.id === undefined ? name : `${name} (id ${d.id})`
+  }
 })
   .addOwnerProp("voyage_id")
   .addLinkedEntity({
@@ -1567,7 +1582,12 @@ export const VoyageShortRefSchema = mkBuilder({
   backingTable: "document_shortref",
   contributionMode: "ReadOnly",
   pkField: "id",
-  getLabel: (d) => d.name
+  // `Name`, not `name`: an entity's data is keyed by property *label*, and the
+  // property below is labelled "Name". Reading the backing field name instead
+  // returned undefined for every row, so the picker listed one blank line per
+  // short reference -- a dropdown that looked empty while holding 1,800 of
+  // them. Every sibling schema here already reads the label.
+  getLabel: (d) => d.Name
 })
   .addText({
     label: "Name",
@@ -1609,11 +1629,15 @@ export const VoyageSourceSchema = mkBuilder({
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own
   })
+  // Editors only. Choosing a short reference is choosing which catalogued
+  // document this is, out of a controlled list a contributor has no basis to
+  // pick from -- and it is the act that settles `short_ref_id` below.
   .addLinkedEntity({
     label: "Short reference",
     backingField: "short_ref_id",
     linkedEntitySchema: VoyageShortRefSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    accessLevel: PropertyAccessLevel.Editor
   })
   // The same column the picker above writes, exposed as a raw integer. It is
   // `document_shortref`'s primary key, so it is settled by choosing a short

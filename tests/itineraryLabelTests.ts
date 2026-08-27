@@ -1,5 +1,8 @@
 import { expect, test } from "vitest"
-import { VoyageItinerarySchema } from "../src/models/entities"
+import {
+  EnslavementRelationSchema,
+  VoyageItinerarySchema
+} from "../src/models/entities"
 
 const port = (Name: string) => ({ data: { Name } })
 
@@ -45,4 +48,23 @@ test("a principal port names the itinerary when no intended first port was given
 /** "unknown" now means neither port was recorded. */
 test("an end with no port at all is still unknown", () => {
   expect(label({})).toBe("Itinerary from unknown to unknown")
+})
+
+const relation = (data: Record<string, unknown>) =>
+  EnslavementRelationSchema.getLabel(data)
+
+/**
+ * A relation being drafted has no primary key yet, so there is no id to give.
+ */
+test("a relation with no id yet is named without one", () => {
+  const type = { data: { "Relation type": "Transportation" } }
+  expect(relation({ "Relation type": type })).toBe("Transportation relation")
+  expect(relation({ "Relation type": type, id: 7 })).toBe(
+    "Transportation relation (id 7)"
+  )
+})
+
+test("a relation whose type is not chosen yet still reads as one", () => {
+  expect(relation({})).toBe("Enslavement relation")
+  expect(relation({ id: 7 })).toBe("Enslavement relation (id 7)")
 })
