@@ -96,7 +96,10 @@ export class PublicationBatchEntity implements PublicationBatch {
  * contributions it holds and how they are spread across statuses. Keyed by
  * `ContributionStatus`; a status with none is simply absent.
  */
-export type BatchWithCounts = PublicationBatchEntity & {
+export type BatchWithCounts = Omit<
+  PublicationBatchEntity,
+  "contributions"
+> & {
   contributionCount: number
   statusCounts: Record<number, number>
 }
