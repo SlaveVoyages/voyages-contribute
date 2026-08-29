@@ -1690,11 +1690,21 @@ export const VoyageSchema = mkBuilder({
   pkField: "voyage_id",
   getLabel: (d) => `Voyage #${d["Voyage ID"]}`
 })
+  // Mandatory, and the editor's to assign. Ids are issued from blocks an editor
+  // controls, so the app cannot mint one. Publication builds the voyage row from
+  // the changes alone (`_process_new_entity` sets `obj.id = obj.voyage_id`; the
+  // uuid on the entity ref is only a temporary handle for remapping foreign
+  // keys), so a contribution with no change against this column would publish a
+  // voyage with no id. `notNull` makes acceptance answer for it -- an editor
+  // cannot decide until they have assigned one -- while Submit stays unaffected,
+  // since the fold there skips what a contributor cannot see and this is
+  // Editor-only.
   .addNumber({
     label: "Voyage ID",
     backingField: "voyage_id",
     description: "The unique ID of the voyage",
     validation: rangeValidation(1, 99999999999),
+    notNull: true,
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
