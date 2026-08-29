@@ -1586,7 +1586,15 @@ export const VoyageShortRefSchema = mkBuilder({
   backingTable: "document_shortref",
   contributionMode: "ReadOnly",
   pkField: "id",
+<<<<<<< HEAD
   // `Name`, not `name`: an entity's data is keyed by property *label*.
+=======
+  // `Name`, not `name`: an entity's data is keyed by property *label*, and the
+  // property below is labelled "Name". Reading the backing field name instead
+  // returned undefined for every row, so the picker listed one blank line per
+  // short reference -- a dropdown that looked empty while holding 1,800 of
+  // them. Every sibling schema here already reads the label.
+>>>>>>> main
   getLabel: (d) => d.Name
 })
   .addText({
@@ -1629,7 +1637,21 @@ export const VoyageSourceSchema = mkBuilder({
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own
   })
+<<<<<<< HEAD
   // Editors only. Choosing a short reference is choosing which catalogued document this is, out of a controlled list a contributor has no basis to pick from.
+=======
+  // Editors only, and mandatory. Choosing a short reference is choosing which
+  // catalogued document this is, out of a controlled list a contributor has no
+  // basis to pick from -- and it is the act that settles `short_ref_id` below.
+  //
+  // `notNull`, because `document_source.short_ref` is NOT NULL with no default:
+  // a contributor creates the source row, but only an editor can name its
+  // reference. Without this the fold raises nothing, acceptance passes, and the
+  // missing key surfaces as a constraint violation at publication -- after the
+  // contribution is Accepted and read-only, which is the state this check
+  // exists to keep anything from reaching. Editor-only, so it is answered for
+  // at acceptance, not held against a contributor who cannot see it.
+>>>>>>> main
   .addLinkedEntity({
     label: "Short reference",
     backingField: "short_ref_id",
