@@ -91,6 +91,16 @@ export class PublicationBatchEntity implements PublicationBatch {
   contributions!: ContributionEntity[]
 }
 
+/**
+ * A batch as the listing endpoints send it: the batch row, plus how many
+ * contributions it holds and how they are spread across statuses. Keyed by
+ * `ContributionStatus`; a status with none is simply absent.
+ */
+export type BatchWithCounts = PublicationBatchEntity & {
+  contributionCount: number
+  statusCounts: Record<number, number>
+}
+
 @Entity("reviews")
 export class ReviewEntity implements Review {
   @PrimaryGeneratedColumn()
@@ -823,13 +833,24 @@ export class DatabaseService {
   }
 
   // Get batches by publication status
+  /**
+   * The batch list, with what each batch holds counted rather than attached.
+   *
+   * This used to `leftJoinAndSelect` the contributions *and* their change sets,
+   * which meant every listing carried the full JSON diff of every contribution
+   * in every batch -- thirty-odd megabytes and six seconds for a screen that
+   * only ever renders numbers. Nothing on the client read a change: the batch
+   * table shows a count, and publishability is decided from counts per status.
+   *
+   * So the counts are what is sent. They come from one grouped query rather
+   * than a join, so the payload is a few rows of integers whatever the batches
+   * contain.
+   */
   async getBatchesByStatus(
     filter: "all" | "published" | "pending"
-  ): Promise<PublicationBatchEntity[]> {
+  ): Promise<BatchWithCounts[]> {
     const queryBuilder = this.batchRepository
       .createQueryBuilder("batch")
-      .leftJoinAndSelect("batch.contributions", "contributions")
-      .leftJoinAndSelect("contributions.changeSet", "changeSet")
       .orderBy("batch.id", "DESC")
     switch (filter) {
       case "published":
@@ -843,7 +864,41 @@ export class DatabaseService {
         // No additional where clause for 'all'
         break
     }
-    return await queryBuilder.getMany()
+    const batches = await queryBuilder.getMany()
+    if (batches.length === 0) {
+      return []
+    }
+    // One row per (batch, status) that actually has contributions, so a batch
+    // with none simply gets no rows and keeps the zeroed counts below.
+    const rows = await this.contributionRepo
+      .createQueryBuilder("contribution")
+      .select("contribution.batchId", "batchId")
+      .addSelect("contribution.status", "status")
+      .addSelect("COUNT(*)", "count")
+      .where("contribution.batchId IN (:...ids)", {
+        ids: batches.map((b) => b.id)
+      })
+      .groupBy("contribution.batchId")
+      .addGroupBy("contribution.status")
+      .getRawMany<{ batchId: number; status: number; count: string | number }>()
+    const counts = new Map<number, Record<number, number>>()
+    for (const row of rows) {
+      const forBatch = counts.get(Number(row.batchId)) ?? {}
+      // `COUNT(*)` comes back as a string from some drivers.
+      forBatch[Number(row.status)] = Number(row.count)
+      counts.set(Number(row.batchId), forBatch)
+    }
+    return batches.map((batch) => {
+      const statusCounts = counts.get(batch.id) ?? {}
+      return {
+        ...batch,
+        statusCounts,
+        contributionCount: Object.values(statusCounts).reduce(
+          (sum, c) => sum + c,
+          0
+        )
+      }
+    })
   }
 
   async deleteContribution(id: string): Promise<boolean> {
