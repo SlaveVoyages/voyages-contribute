@@ -240,14 +240,33 @@ export const VoyageShipEntitySchema = mkBuilder({
   })
   .build()
 
+/** The first of `labels` the contributor filled in, or "unknown". */
+const portName = (
+  data: Record<string, { data: { Name?: string } } | undefined>,
+  ...labels: string[]
+) => labels.map((l) => data[l]?.data.Name).find(Boolean) ?? "unknown"
+
 export const VoyageItinerarySchema = mkBuilder({
   name: "VoyageItinerary",
   backingTable: "voyage_voyageitinerary",
   pkField: "id",
   contributionMode: "Owned",
+  /**
+   * Named from whichever port the contributor actually gave.
+   *
+   * Only the intended first ports were read, so a voyage recorded the way
+   * sources usually give one -- principal port filled in, intended first blank
+   * -- was labelled "Itinerary from unknown" in the Preview box and the changes
+   * list. Intended first still wins where given, being the itinerary as
+   * planned; "unknown" now means neither was recorded.
+   */
   getLabel: (data) =>
-    `Itinerary from ${data["First port of intended embarkation"]?.data.Name ?? "unknown"} to ` +
-    (data["First port of intended disembarkation"]?.data.Name ?? "unknown")
+    `Itinerary from ${portName(data, "First port of intended embarkation", "Principal port of embarkation")} to ` +
+    portName(
+      data,
+      "First port of intended disembarkation",
+      "Principal port of disembarkation"
+    )
 })
   .addLinkedEntity({
     linkedEntitySchema: Location,
@@ -1487,10 +1506,29 @@ export const EnslavementRelationSchema = mkBuilder({
   backingTable: "past_enslavementrelation",
   contributionMode: "Owned",
   pkField: "id",
-  getLabel: (d, short) =>
-    short
-      ? (d["Relation type"]?.data["Relation type"] ?? "")
-      : `${d["Relation type"]?.data["Relation type"]} relation (id ${d.id})`
+  /**
+   * The id is only mentioned once there is one.
+   *
+   * `data.id` is where `entityFetch` puts the primary key of a row it read, so
+   * a relation still being drafted in a contribution has none -- it is not in
+   * the table yet. Interpolating it regardless labelled every new relation
+   * "Transportation relation (id undefined)", which reads as a fault in a
+   * relation that is simply unsaved. The relation type gets the same treatment
+   * for the same reason: it is chosen on the form, and until it is chosen there
+   * is nothing to name.
+   */
+  getLabel: (d, short) => {
+    const type = d["Relation type"]?.data["Relation type"]
+    // Both forms fall back to "Enslavement relation" when the type is unchosen:
+    // the short label heads a drafted relation the same as the long one, and a
+    // bare "" there read as a broken row rather than an unfinished one. The
+    // short form is the type alone; the long form spells out "... relation".
+    if (short) {
+      return type ?? "Enslavement relation"
+    }
+    const name = type ? `${type} relation` : "Enslavement relation"
+    return d.id === undefined ? name : `${name} (id ${d.id})`
+  }
 })
   .addOwnerProp("voyage_id")
   .addLinkedEntity({
@@ -1548,7 +1586,12 @@ export const VoyageShortRefSchema = mkBuilder({
   backingTable: "document_shortref",
   contributionMode: "ReadOnly",
   pkField: "id",
-  getLabel: (d) => d.name
+  // `Name`, not `name`: an entity's data is keyed by property *label*, and the
+  // property below is labelled "Name". Reading the backing field name instead
+  // returned undefined for every row, so the picker listed one blank line per
+  // short reference -- a dropdown that looked empty while holding 1,800 of
+  // them. Every sibling schema here already reads the label.
+  getLabel: (d) => d.Name
 })
   .addText({
     label: "Name",
@@ -1590,16 +1633,38 @@ export const VoyageSourceSchema = mkBuilder({
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own
   })
+  // Editors only, and mandatory. Choosing a short reference is choosing which
+  // catalogued document this is, out of a controlled list a contributor has no
+  // basis to pick from -- and it is the act that settles `short_ref_id` below.
+  //
+  // `notNull`, because `document_source.short_ref` is NOT NULL with no default:
+  // a contributor creates the source row, but only an editor can name its
+  // reference. Without this the fold raises nothing, acceptance passes, and the
+  // missing key surfaces as a constraint violation at publication -- after the
+  // contribution is Accepted and read-only, which is the state this check
+  // exists to keep anything from reaching. Editor-only, so it is answered for
+  // at acceptance, not held against a contributor who cannot see it.
   .addLinkedEntity({
     label: "Short reference",
     backingField: "short_ref_id",
     linkedEntitySchema: VoyageShortRefSchema,
-    mode: EntityLinkEditMode.Select
+    mode: EntityLinkEditMode.Select,
+    notNull: true,
+    accessLevel: PropertyAccessLevel.Editor
   })
+  // The same column the picker above writes, exposed as a raw integer. It is
+  // `document_shortref`'s primary key, so it is settled by choosing a short
+  // reference and is not a value anyone types -- offering both put two ways to
+  // write one column on the form, with nothing saying which one wins.
+  //
+  // Hidden rather than Editor, and rather than deleted. No one edits a key by
+  // hand, editors included; and stored changesets reference properties by uid,
+  // so removing it would strand every change already written against this one.
   .addNumber({
     label: "Short reference id",
     backingField: "short_ref_id",
-    uid: "voyage_source_numeric_short_ref_id"
+    uid: "voyage_source_numeric_short_ref_id",
+    accessLevel: PropertyAccessLevel.Hidden
   })
   .addText({
     label: "Notes",
