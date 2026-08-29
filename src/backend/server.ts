@@ -267,13 +267,6 @@ type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
 /**
  * Columns whose text a reader who does not own the row is not allowed to see.
- *
- * `/contributions` redacts other people's rows to `{id, root, status}`, but the
- * ordering is applied before that. Ordering the whole table by one of these
- * would let a non-editor read positions off values they cannot see -- and, by
- * adding their own and watching where a row lands, narrow another author's
- * text. So a caller who is not allowed the whole table's contents cannot order
- * it by these; the sort falls back to `id`.
  */
 const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = ["author", "comments"]
 
