@@ -265,7 +265,15 @@ const SORTABLE_COLUMNS = [
 ] as const
 type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
-const getPaginationArgs = (req: any) => {
+/**
+ * Columns whose text a reader who does not own the row is not allowed to see.
+ */
+const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = ["author", "comments"]
+
+const getPaginationArgs = (
+  req: any,
+  { allowSensitiveSort = true }: { allowSensitiveSort?: boolean } = {}
+) => {
   const rawPage = req.query.page ? parseInt(req.query.page as string) : 1
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
   const rawLimit = req.query.limit
@@ -277,11 +285,21 @@ const getPaginationArgs = (req: any) => {
       : DEFAULT_LIMIT
   // Anything else falls back to "id" rather than reaching the query, so an
   // unknown column name orders by something stable instead of throwing.
-  const sortBy = SORTABLE_COLUMNS.includes(req.query.sortBy as SortableColumn)
+  const requested = SORTABLE_COLUMNS.includes(req.query.sortBy as SortableColumn)
     ? (req.query.sortBy as SortableColumn)
     : "id"
+  // A sensitive column asked for by someone who may not read the whole table
+  // is dropped to `id` rather than refused: the order is a courtesy, and the
+  // rows still come back.
+  const sortBy =
+    !allowSensitiveSort && SENSITIVE_SORT_COLUMNS.includes(requested)
+      ? "id"
+      : requested
+  // Case-insensitive: AG Grid's sort model and the rest of the frontend pass
+  // lowercase `asc`/`desc`, and TypeORM accepts either -- so matching only the
+  // exact string "DESC" silently sorted `desc` ascending.
   const sortOrder: "ASC" | "DESC" =
-    req.query.sortOrder === "DESC" ? "DESC" : "ASC"
+    String(req.query.sortOrder).toUpperCase() === "DESC" ? "DESC" : "ASC"
   return { page, limit, sortBy, sortOrder }
 }
 
@@ -366,8 +384,15 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
           ? requestedAuthor
           : (ownIdentity ?? undefined)
 
+    // An editor reads every row, so may order by any column. A contributor may
+    // order by a sensitive one only when the list is narrowed to their own work
+    // -- `author` is set, and for a non-editor that can only be themselves
+    // (listing anyone else's was refused above). Ordering the shared, redacted
+    // table by author or comments is what falls back to `id`.
     const result = await dbService.listContributions({
-      ...getPaginationArgs(req),
+      ...getPaginationArgs(req, {
+        allowSensitiveSort: isEditor || author !== undefined
+      }),
       status,
       batchId,
       rootId,

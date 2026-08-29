@@ -53,6 +53,9 @@ test("an end with no port at all is still unknown", () => {
 const relation = (data: Record<string, unknown>) =>
   EnslavementRelationSchema.getLabel(data)
 
+const relationShort = (data: Record<string, unknown>) =>
+  EnslavementRelationSchema.getLabel(data, true)
+
 /**
  * A relation being drafted has no primary key yet, so there is no id to give.
  */
@@ -67,4 +70,16 @@ test("a relation with no id yet is named without one", () => {
 test("a relation whose type is not chosen yet still reads as one", () => {
   expect(relation({})).toBe("Enslavement relation")
   expect(relation({ id: 7 })).toBe("Enslavement relation (id 7)")
+})
+
+/**
+ * The short form heads a drafted relation too, so an unchosen type reads as
+ * "Enslavement relation" there as well -- a bare "" showed as a blank heading,
+ * which looked like a broken row rather than an unfinished one.
+ */
+test("the short label also names a typeless relation", () => {
+  const type = { data: { "Relation type": "Transportation" } }
+  // Chosen: the type alone, as before. Unchosen: the fallback, not a blank.
+  expect(relationShort({ "Relation type": type })).toBe("Transportation")
+  expect(relationShort({})).toBe("Enslavement relation")
 })

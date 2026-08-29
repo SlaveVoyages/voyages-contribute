@@ -76,9 +76,14 @@ test("contributions order by status", async () => {
   expect(await idsSortedBy("status", "DESC")).toEqual(["b", "d", "a", "c"])
 })
 
-/** Unchanged, and still the fallback for anything the caller cannot name. */
-test("contributions order by id when nothing else is asked for", async () => {
+/**
+ * `id` is both a sortable column and the tiebreaker, so its own direction has
+ * to be honoured -- the tiebreaker line used to force ASC unconditionally, so
+ * `sortBy=id&sortOrder=DESC` came back ascending.
+ */
+test("contributions order by id in the direction asked for", async () => {
   expect(await idsSortedBy("id", "ASC")).toEqual(["a", "b", "c", "d"])
+  expect(await idsSortedBy("id", "DESC")).toEqual(["d", "c", "b", "a"])
 })
 
 test("statuses are the ones the app uses", () => {
