@@ -498,8 +498,10 @@ export class DatabaseService {
     } else if (sortBy === "status") {
       order.status = sortOrder
     }
-    // Add secondary sort
-    order.id = "ASC"
+    // `id` doubles as the tiebreaker, so it is always in the clause. When it is
+    // what the caller asked to order by, it takes their direction; otherwise it
+    // stays ASC to break ties stably beneath the primary column.
+    order.id = sortBy === "id" ? sortOrder : "ASC"
 
     // Calculate offset
     const offset = (page - 1) * limit

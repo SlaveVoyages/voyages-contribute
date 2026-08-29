@@ -1519,8 +1519,12 @@ export const EnslavementRelationSchema = mkBuilder({
    */
   getLabel: (d, short) => {
     const type = d["Relation type"]?.data["Relation type"]
+    // Both forms fall back to "Enslavement relation" when the type is unchosen:
+    // the short label heads a drafted relation the same as the long one, and a
+    // bare "" there read as a broken row rather than an unfinished one. The
+    // short form is the type alone; the long form spells out "... relation".
     if (short) {
-      return type ?? ""
+      return type ?? "Enslavement relation"
     }
     const name = type ? `${type} relation` : "Enslavement relation"
     return d.id === undefined ? name : `${name} (id ${d.id})`
@@ -1629,14 +1633,23 @@ export const VoyageSourceSchema = mkBuilder({
     linkedEntitySchema: SparseDateSchema,
     mode: EntityLinkEditMode.Own
   })
-  // Editors only. Choosing a short reference is choosing which catalogued
-  // document this is, out of a controlled list a contributor has no basis to
-  // pick from -- and it is the act that settles `short_ref_id` below.
+  // Editors only, and mandatory. Choosing a short reference is choosing which
+  // catalogued document this is, out of a controlled list a contributor has no
+  // basis to pick from -- and it is the act that settles `short_ref_id` below.
+  //
+  // `notNull`, because `document_source.short_ref` is NOT NULL with no default:
+  // a contributor creates the source row, but only an editor can name its
+  // reference. Without this the fold raises nothing, acceptance passes, and the
+  // missing key surfaces as a constraint violation at publication -- after the
+  // contribution is Accepted and read-only, which is the state this check
+  // exists to keep anything from reaching. Editor-only, so it is answered for
+  // at acceptance, not held against a contributor who cannot see it.
   .addLinkedEntity({
     label: "Short reference",
     backingField: "short_ref_id",
     linkedEntitySchema: VoyageShortRefSchema,
     mode: EntityLinkEditMode.Select,
+    notNull: true,
     accessLevel: PropertyAccessLevel.Editor
   })
   // The same column the picker above writes, exposed as a raw integer. It is

@@ -18,6 +18,12 @@ const voyage = (type: "new" | "existing", id: string | number) => ({
   id
 })
 
+const source = (type: "new" | "existing", id: string | number) => ({
+  type,
+  schema: "Voyage Source",
+  id
+})
+
 /** `dataset` is the backing field of Voyage's mandatory "Dataset". */
 const fold = (
   entityRef: ReturnType<typeof voyage>,
@@ -94,4 +100,44 @@ test("an entity with nothing mandatory missing reports nothing either way", () =
       "Property 'Dataset' is required and cannot be cleared."
     )
   }
+})
+
+/**
+ * A new source must carry a short reference.
+ *
+ * `document_source.short_ref` is NOT NULL with no default, so a source created
+ * without one publishes into a constraint violation -- after acceptance, when
+ * nobody can fix it. The picker writes `short_ref_id` as a linked FK, which the
+ * fold flattens to a direct change on that column, so an unset one is simply an
+ * absent change.
+ */
+test("a new source must name its short reference", () => {
+  const errors = errorsOf(
+    fold(source("new", "tmp-src-1"), [{ property: "title", changed: "A book" }])
+  )
+  expect(errors).toContain("Property 'Short reference' is required but not set.")
+})
+
+test("a new source that names one is accepted", () => {
+  const errors = errorsOf(
+    fold(source("new", "tmp-src-1"), [
+      { property: "title", changed: "A book" },
+      { property: "short_ref_id", changed: 2727 }
+    ])
+  )
+  expect(errors).not.toContain(
+    "Property 'Short reference' is required but not set."
+  )
+})
+
+test("an existing source referenced without change keeps its short reference", () => {
+  // How a contribution usually cites a source: it points at an existing
+  // `document_source` row that already satisfies the column. Nothing is said
+  // about `short_ref_id`, so nothing is missing.
+  const errors = errorsOf(
+    fold(source("existing", 19532), [
+      { property: "title", changed: "A corrected title" }
+    ])
+  )
+  expect(errors).toEqual([])
 })
