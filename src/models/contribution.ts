@@ -34,6 +34,15 @@ export enum ContributionStatus {
   Published = 4
 }
 
+/**
+ * A batch as the listing endpoints (`/batches/:filter`) send it: the row, plus
+ * how many contributions it holds and how they are spread across statuses.
+ */
+export interface BatchWithCounts extends PublicationBatch {
+  contributionCount: number
+  statusCounts: Partial<Record<ContributionStatus, number>>
+}
+
 export interface Review {
   changeSet: ChangeSet
   stackOrder: number

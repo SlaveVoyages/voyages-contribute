@@ -20,6 +20,7 @@ import type { EntityChange, EntityRef } from "../models/changeSets"
 import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import {
+  BatchWithCounts,
   ChangeSet,
   PublicationBatch,
   Review,
@@ -92,17 +93,18 @@ export class PublicationBatchEntity implements PublicationBatch {
 }
 
 /**
- * A batch as the listing endpoints send it: the batch row, plus how many
- * contributions it holds and how they are spread across statuses. Keyed by
- * `ContributionStatus`; a status with none is simply absent.
+ * The listing shape, re-exported over the entity for callers holding one.
+ *
+ * The contract itself -- `BatchWithCounts` -- lives in the models package, so a
+ * package consumer can type the payload; this alias just pairs it with the
+ * TypeORM entity the query actually produces.
+ *
+ * `contributions` is omitted: the entity's relation is not populated by the
+ * listing query (that is the whole point -- counts, not contents), so a type
+ * that carried it would let a caller reach for an array that is never there.
  */
-export type BatchWithCounts = Omit<
-  PublicationBatchEntity,
-  "contributions"
-> & {
-  contributionCount: number
-  statusCounts: Record<number, number>
-}
+export type BatchListing = Omit<PublicationBatchEntity, "contributions"> &
+  BatchWithCounts
 
 @Entity("reviews")
 export class ReviewEntity implements Review {
@@ -853,7 +855,7 @@ export class DatabaseService {
    */
   async getBatchesByStatus(
     filter: "all" | "published" | "pending"
-  ): Promise<BatchWithCounts[]> {
+  ): Promise<BatchListing[]> {
     const queryBuilder = this.batchRepository
       .createQueryBuilder("batch")
       .orderBy("batch.id", "DESC")
@@ -886,11 +888,15 @@ export class DatabaseService {
       .groupBy("contribution.batchId")
       .addGroupBy("contribution.status")
       .getRawMany<{ batchId: number; status: number; count: string | number }>()
-    const counts = new Map<number, Record<number, number>>()
+    const counts = new Map<
+      number,
+      Partial<Record<ContributionStatus, number>>
+    >()
     for (const row of rows) {
       const forBatch = counts.get(Number(row.batchId)) ?? {}
-      // `COUNT(*)` comes back as a string from some drivers.
-      forBatch[Number(row.status)] = Number(row.count)
+      // `COUNT(*)` comes back as a string from some drivers. The status is one
+      // of the enum's values, read back off the column it was stored under.
+      forBatch[Number(row.status) as ContributionStatus] = Number(row.count)
       counts.set(Number(row.batchId), forBatch)
     }
     return batches.map((batch) => {
