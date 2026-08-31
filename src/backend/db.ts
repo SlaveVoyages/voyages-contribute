@@ -20,6 +20,7 @@ import type { EntityChange, EntityRef } from "../models/changeSets"
 import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import {
+  BatchWithCounts,
   ChangeSet,
   PublicationBatch,
   Review,
@@ -90,6 +91,20 @@ export class PublicationBatchEntity implements PublicationBatch {
   @OneToMany(() => ContributionEntity, (contribution) => contribution.batch)
   contributions!: ContributionEntity[]
 }
+
+/**
+ * The listing shape, re-exported over the entity for callers holding one.
+ *
+ * The contract itself -- `BatchWithCounts` -- lives in the models package, so a
+ * package consumer can type the payload; this alias just pairs it with the
+ * TypeORM entity the query actually produces.
+ *
+ * `contributions` is omitted: the entity's relation is not populated by the
+ * listing query (that is the whole point -- counts, not contents), so a type
+ * that carried it would let a caller reach for an array that is never there.
+ */
+export type BatchListing = Omit<PublicationBatchEntity, "contributions"> &
+  BatchWithCounts
 
 @Entity("reviews")
 export class ReviewEntity implements Review {
@@ -825,13 +840,24 @@ export class DatabaseService {
   }
 
   // Get batches by publication status
+  /**
+   * The batch list, with what each batch holds counted rather than attached.
+   *
+   * This used to `leftJoinAndSelect` the contributions *and* their change sets,
+   * which meant every listing carried the full JSON diff of every contribution
+   * in every batch -- thirty-odd megabytes and six seconds for a screen that
+   * only ever renders numbers. Nothing on the client read a change: the batch
+   * table shows a count, and publishability is decided from counts per status.
+   *
+   * So the counts are what is sent. They come from one grouped query rather
+   * than a join, so the payload is a few rows of integers whatever the batches
+   * contain.
+   */
   async getBatchesByStatus(
     filter: "all" | "published" | "pending"
-  ): Promise<PublicationBatchEntity[]> {
+  ): Promise<BatchListing[]> {
     const queryBuilder = this.batchRepository
       .createQueryBuilder("batch")
-      .leftJoinAndSelect("batch.contributions", "contributions")
-      .leftJoinAndSelect("contributions.changeSet", "changeSet")
       .orderBy("batch.id", "DESC")
     switch (filter) {
       case "published":
@@ -845,7 +871,45 @@ export class DatabaseService {
         // No additional where clause for 'all'
         break
     }
-    return await queryBuilder.getMany()
+    const batches = await queryBuilder.getMany()
+    if (batches.length === 0) {
+      return []
+    }
+    // One row per (batch, status) that actually has contributions, so a batch
+    // with none simply gets no rows and keeps the zeroed counts below.
+    const rows = await this.contributionRepo
+      .createQueryBuilder("contribution")
+      .select("contribution.batchId", "batchId")
+      .addSelect("contribution.status", "status")
+      .addSelect("COUNT(*)", "count")
+      .where("contribution.batchId IN (:...ids)", {
+        ids: batches.map((b) => b.id)
+      })
+      .groupBy("contribution.batchId")
+      .addGroupBy("contribution.status")
+      .getRawMany<{ batchId: number; status: number; count: string | number }>()
+    const counts = new Map<
+      number,
+      Partial<Record<ContributionStatus, number>>
+    >()
+    for (const row of rows) {
+      const forBatch = counts.get(Number(row.batchId)) ?? {}
+      // `COUNT(*)` comes back as a string from some drivers. The status is one
+      // of the enum's values, read back off the column it was stored under.
+      forBatch[Number(row.status) as ContributionStatus] = Number(row.count)
+      counts.set(Number(row.batchId), forBatch)
+    }
+    return batches.map((batch) => {
+      const statusCounts = counts.get(batch.id) ?? {}
+      return {
+        ...batch,
+        statusCounts,
+        contributionCount: Object.values(statusCounts).reduce(
+          (sum, c) => sum + c,
+          0
+        )
+      }
+    })
   }
 
   async deleteContribution(id: string): Promise<boolean> {

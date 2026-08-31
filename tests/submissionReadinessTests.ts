@@ -15,9 +15,10 @@ import { sampleContributions } from "./sampleContributions"
  * accepting the contribution is held to all of it, acceptance being the last
  * moment anyone can still edit.
  *
- * The schema has exactly one mandatory property of each kind reaching the fold,
- * which is what the tests below turn on:
+ * The mandatory properties reaching the fold, which is what the tests below
+ * turn on:
  *
+ *   Voyage.Voyage ID                      Editor-only  — the editor's to assign
  *   Voyage.Dataset                        Editor-only  — the editor's to fill
  *   Voyage Source Connection.Source       Beginner     — the contributor's
  */
@@ -74,6 +75,14 @@ const emptied =
 /** Missing a value only an editor can supply. */
 const missingDataset = emptied("Voyage_dataset")(complete)
 
+/**
+ * Missing the id the editor assigns from their own block.
+ *
+ * Publication builds a new voyage row out of the changes alone, so a
+ * contribution with nothing against this column publishes a voyage with no id.
+ */
+const missingVoyageId = emptied("Voyage_voyage_id")(complete)
+
 /** Missing a value the contributor was in a position to supply. */
 const missingSource = emptied("Voyage Source Connection_source_id")(complete)
 
@@ -84,7 +93,22 @@ test("the fixtures are what the tests below assume", () => {
   expect(checkSubmissionReadiness(complete, Submitted)).toBeNull()
   expect(checkSubmissionReadiness(complete, Accepted)).toBeNull()
   expect(checkSubmissionReadiness(missingDataset, Accepted)).not.toBeNull()
+  expect(checkSubmissionReadiness(missingVoyageId, Accepted)).not.toBeNull()
   expect(checkSubmissionReadiness(missingSource, Submitted)).not.toBeNull()
+})
+
+/**
+ * The voyage id is not a key the app can mint -- ids come from blocks an editor
+ * controls -- so a contributor submits without one and the editor assigns it
+ * before deciding. Both halves of that are the fold's doing.
+ */
+test("a contributor submits without a voyage id, an editor cannot accept without one", () => {
+  expect(checkSubmissionReadiness(missingVoyageId, Submitted)).toBeNull()
+
+  const refusal = checkSubmissionReadiness(missingVoyageId, Accepted)!
+  const errors = refusal.validation.filter((v) => v.kind === "error")
+  expect(errors).toHaveLength(1)
+  expect(errors[0].message).toContain("Voyage ID")
 })
 
 test("a contributor is not held to a value the form will not show them", () => {

@@ -266,9 +266,13 @@ const SORTABLE_COLUMNS = [
 type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
 /**
- * Columns whose text a reader who does not own the row is not allowed to see.
+ * Columns a reader who does not own the row is not allowed to see
  */
-const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = ["author", "comments"]
+const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = [
+  "author",
+  "timestamp",
+  "comments"
+]
 
 const getPaginationArgs = (
   req: any,
