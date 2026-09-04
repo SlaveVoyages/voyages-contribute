@@ -373,7 +373,15 @@ export class DatabaseService {
       rootId?: string | number
       /** Schema of the root entity, within which its id is unique. */
       rootSchema?: string
-      sortBy?: "author" | "timestamp" | "comments" | "status" | "id"
+      sortBy?:
+        | "author"
+        | "timestamp"
+        | "comments"
+        | "status"
+        | "id"
+        | "decidedBy"
+        | "batch"
+        | "voyage_id"
       sortOrder?: "ASC" | "DESC"
     } = {}
   ): Promise<{
@@ -491,14 +499,39 @@ export class DatabaseService {
       )
     }
 
+    // Calculate offset
+    const offset = (page - 1) * limit
+
+    // Voyage id lives inside `root`, a simple-json column, so it has no column
+    // of its own to name in a find-options `order`. Ordered here with a JSON
+    // path instead. Caveat, accepted by the committee: the extracted value
+    // keeps its JSON type, so an existing voyage's numeric id and a new
+    // contribution's uuid sort under different type rules -- numbers group
+    // apart from text -- and this is a best-effort ordering of a materialized
+    // column rather than an exact one. json_extract exists in both sqlite and
+    // mysql (function names are case-insensitive in both).
+    if (sortBy === "voyage_id") {
+      const [data, total] = await this.contributionRepo
+        .createQueryBuilder("contribution")
+        .setFindOptions({ where, relations: contribAllRelations })
+        // Aliased with a dotless name and ordered by the alias: the join-based
+        // pagination path parses a dotted orderBy as alias.column, which a raw
+        // json_extract(...) expression is not.
+        .addSelect("json_extract(contribution.root, '$.id')", "voyage_sort_key")
+        .orderBy("voyage_sort_key", sortOrder)
+        // A stable tiebreaker beneath the JSON order, matching the find path.
+        .addOrderBy("contribution.id", "ASC")
+        .skip(offset)
+        .take(limit)
+        .getManyAndCount()
+      return { data, total, page, limit }
+    }
+
     // Build order clause.
     //
-    // Only real columns are offered. A caller can ask to order by the voyage a
-    // contribution is rooted at, or by what kind of contribution it is, but
-    // both of those live inside `root`, a simple-json column: ordering by it
-    // sorts the serialised text, which puts "10" before "9" and groups by
-    // whichever key JSON.stringify happened to emit first. That is not the
-    // order anyone asked for, so it is not offered rather than answered wrong.
+    // Real columns and to-one relations are offered. Ordering by `root` (the
+    // voyage id / contribution type) is handled above; it cannot go here
+    // because it is a JSON path, not a column.
     const order: any = {}
     if (sortBy === "author") {
       order.changeSet = { author: sortOrder }
@@ -508,14 +541,18 @@ export class DatabaseService {
       order.changeSet = { comments: sortOrder }
     } else if (sortBy === "status") {
       order.status = sortOrder
+    } else if (sortBy === "decidedBy") {
+      order.decidedBy = sortOrder
+    } else if (sortBy === "batch") {
+      // `batch` is a to-one relation, so its rows are not multiplied by the
+      // join and pagination stays correct. Unassigned rows have a null title,
+      // which the database groups at one end of the order.
+      order.batch = { title: sortOrder }
     }
     // `id` doubles as the tiebreaker, so it is always in the clause. When it is
     // what the caller asked to order by, it takes their direction; otherwise it
     // stays ASC to break ties stably beneath the primary column.
     order.id = sortBy === "id" ? sortOrder : "ASC"
-
-    // Calculate offset
-    const offset = (page - 1) * limit
 
     // Execute queries
     const [data, total] = await this.contributionRepo.findAndCount({

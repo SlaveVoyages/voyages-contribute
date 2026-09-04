@@ -261,7 +261,13 @@ const SORTABLE_COLUMNS = [
   "timestamp",
   "comments",
   "status",
-  "id"
+  "id",
+  "decidedBy",
+  "batch",
+  // Materialized from `root` via a JSON path -- best-effort, see
+  // listContributions. Ship and Nationality are not offered: they are not
+  // stored on the contribution at all.
+  "voyage_id"
 ] as const
 type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
