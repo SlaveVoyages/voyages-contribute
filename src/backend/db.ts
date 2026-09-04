@@ -13,7 +13,12 @@ import {
   In,
   EntityManager,
   IsNull,
-  Raw
+  Raw,
+  Brackets,
+  Between,
+  MoreThanOrEqual,
+  LessThanOrEqual,
+  SelectQueryBuilder
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
@@ -267,6 +272,52 @@ const LIKE_ESCAPE = "!"
 const likeLiteral = (value: string): string =>
   value.replace(/[!%_]/g, (char) => `${LIKE_ESCAPE}${char}`)
 
+/**
+ * Applies a listContributions sort to a query builder. Used on the search /
+ * voyage-id path, which cannot use a find-options `order` object. Relation
+ * columns are named through the aliases setFindOptions generates for the
+ * `contribAllRelations` joins (`<mainAlias>__<relation>`). `id` is always the
+ * tiebreaker beneath the primary column, and takes the caller's direction when
+ * it is itself the primary.
+ */
+const applyOrderToQueryBuilder = (
+  qb: SelectQueryBuilder<ContributionEntity>,
+  sortBy: string,
+  sortOrder: "ASC" | "DESC"
+): void => {
+  switch (sortBy) {
+    case "voyage_id":
+      qb.addSelect(
+        "json_extract(contribution.root, '$.id')",
+        "voyage_sort_key"
+      ).orderBy("voyage_sort_key", sortOrder)
+      break
+    case "author":
+      qb.orderBy("contribution__changeSet.author", sortOrder)
+      break
+    case "timestamp":
+      qb.orderBy("contribution__changeSet.timestamp", sortOrder)
+      break
+    case "comments":
+      qb.orderBy("contribution__changeSet.comments", sortOrder)
+      break
+    case "status":
+      qb.orderBy("contribution.status", sortOrder)
+      break
+    case "decidedBy":
+      qb.orderBy("contribution.decidedBy", sortOrder)
+      break
+    case "batch":
+      qb.orderBy("contribution__batch.title", sortOrder)
+      break
+    default:
+      qb.orderBy("contribution.id", sortOrder)
+  }
+  if (sortBy !== "id") {
+    qb.addOrderBy("contribution.id", "ASC")
+  }
+}
+
 const getFullContribution = (
   manager: EntityManager,
   id: string
@@ -383,6 +434,23 @@ export class DatabaseService {
         | "batch"
         | "voyage_id"
       sortOrder?: "ASC" | "DESC"
+      /**
+       * Free-text search. Case-insensitive OR match across the contribution id,
+       * the root voyage id, and (subject to visibility) the changeSet author /
+       * title / comments.
+       */
+      search?: string
+      /**
+       * Who may be matched on the sensitive changeSet fields (author, title,
+       * comments). "all" for an editor -- every row. For a contributor, only
+       * their own rows, named by identity, so a text search cannot probe the
+       * redacted content of other people's contributions. The public fields
+       * (contribution id, voyage id) are always searchable by anyone.
+       */
+      searchSensitiveScope?: "all" | { ownIdentity: string | null }
+      /** Inclusive lower / upper bounds on the changeSet timestamp (epoch ms). */
+      dateFrom?: number
+      dateTo?: number
     } = {}
   ): Promise<{
     data: ContributionEntity[]
@@ -399,7 +467,11 @@ export class DatabaseService {
       rootId,
       rootSchema,
       sortBy = "id",
-      sortOrder = "ASC"
+      sortOrder = "ASC",
+      search,
+      searchSensitiveScope = "all",
+      dateFrom,
+      dateTo
     } = options
 
     // Build where clause
@@ -433,19 +505,32 @@ export class DatabaseService {
     // for every author this code writes. `LOWER()` would only add a second,
     // different folding — SQL folds by collation and JavaScript by Unicode —
     // on top of one the data does not need.
+    // Author and the date range both live on the changeSet, so they are built
+    // into one nested clause -- a where holds a single condition per relation.
+    const changeSetWhere: any = {}
     if (author) {
       const identity = authorIdentity(author)
-      where.changeSet = {
-        author: Raw(
-          (column) =>
-            `(${column} = :authorIdentity` +
-            ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
-          {
-            authorIdentity: identity,
-            authorSuffix: `%<${likeLiteral(identity)}>`
-          }
-        )
-      }
+      changeSetWhere.author = Raw(
+        (column) =>
+          `(${column} = :authorIdentity` +
+          ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
+        {
+          authorIdentity: identity,
+          authorSuffix: `%<${likeLiteral(identity)}>`
+        }
+      )
+    }
+    // Date range on the changeSet timestamp -- the same value the Date column
+    // shows and `sortBy: "timestamp"` orders by. Open-ended on either side.
+    if (dateFrom !== undefined && dateTo !== undefined) {
+      changeSetWhere.timestamp = Between(dateFrom, dateTo)
+    } else if (dateFrom !== undefined) {
+      changeSetWhere.timestamp = MoreThanOrEqual(dateFrom)
+    } else if (dateTo !== undefined) {
+      changeSetWhere.timestamp = LessThanOrEqual(dateTo)
+    }
+    if (Object.keys(changeSetWhere).length > 0) {
+      where.changeSet = changeSetWhere
     }
 
     // `root` is a simple-json column, so it is matched as text. This lets a
@@ -502,36 +587,76 @@ export class DatabaseService {
     // Calculate offset
     const offset = (page - 1) * limit
 
-    // Voyage id lives inside `root`, a simple-json column, so it has no column
-    // of its own to name in a find-options `order`. Ordered here with a JSON
-    // path instead. Caveat, accepted by the committee: the extracted value
-    // keeps its JSON type, so an existing voyage's numeric id and a new
-    // contribution's uuid sort under different type rules -- numbers group
-    // apart from text -- and this is a best-effort ordering of a materialized
-    // column rather than an exact one. json_extract exists in both sqlite and
-    // mysql (function names are case-insensitive in both).
-    if (sortBy === "voyage_id") {
-      const [data, total] = await this.contributionRepo
+    // A free-text search, or ordering by the voyage id, both need a query
+    // builder: the search is an OR group across columns and a relation, and the
+    // voyage id lives inside `root` (a simple-json column) so it has no column
+    // of its own to name in a find-options `order`.
+    const useQueryBuilder = search !== undefined || sortBy === "voyage_id"
+
+    if (useQueryBuilder) {
+      const qb = this.contributionRepo
         .createQueryBuilder("contribution")
         .setFindOptions({ where, relations: contribAllRelations })
-        // Aliased with a dotless name and ordered by the alias: the join-based
-        // pagination path parses a dotted orderBy as alias.column, which a raw
-        // json_extract(...) expression is not.
-        .addSelect("json_extract(contribution.root, '$.id')", "voyage_sort_key")
-        .orderBy("voyage_sort_key", sortOrder)
-        // A stable tiebreaker beneath the JSON order, matching the find path.
-        .addOrderBy("contribution.id", "ASC")
-        .skip(offset)
-        .take(limit)
-        .getManyAndCount()
+
+      if (search !== undefined) {
+        // Case-insensitive %term% match. LIKE folds case for ASCII on both
+        // sqlite and the app's MySQL collation; the term is escaped so % and _
+        // in the query are literals.
+        const term = `%${likeLiteral(search)}%`
+        qb.andWhere(
+          new Brackets((b) => {
+            // Public fields, searchable by anyone: the contribution id and the
+            // voyage id (root.id, via the same JSON path the sort uses).
+            b.where(
+              `contribution.id LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
+              { searchTerm: term }
+            ).orWhere(
+              `json_extract(contribution.root, '$.id') LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
+              { searchTerm: term }
+            )
+            // Sensitive fields (author / title / comments) live on the
+            // changeSet. Matched via a subquery keyed by the FK so this does not
+            // depend on the join alias. For an editor, across every row; for a
+            // contributor, only their own rows -- named by identity -- so a
+            // search cannot probe the redacted content of other people's work.
+            const sensitive =
+              `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+              ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
+            if (searchSensitiveScope === "all") {
+              b.orWhere(
+                `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
+                { searchTerm: term }
+              )
+            } else if (searchSensitiveScope.ownIdentity) {
+              const own = searchSensitiveScope.ownIdentity
+              b.orWhere(
+                "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
+                  `(cs.author = :searchOwn OR cs.author LIKE :searchOwnSuffix ESCAPE '${LIKE_ESCAPE}')` +
+                  ` AND (${sensitive}))`,
+                {
+                  searchTerm: term,
+                  searchOwn: own,
+                  searchOwnSuffix: `%<${likeLiteral(own)}>`
+                }
+              )
+            }
+            // An anonymous contributor (no identity) matches only the public
+            // fields above -- nothing more is added.
+          })
+        )
+      }
+
+      applyOrderToQueryBuilder(qb, sortBy, sortOrder)
+      const [data, total] = await qb.skip(offset).take(limit).getManyAndCount()
       return { data, total, page, limit }
     }
 
     // Build order clause.
     //
     // Real columns and to-one relations are offered. Ordering by `root` (the
-    // voyage id / contribution type) is handled above; it cannot go here
-    // because it is a JSON path, not a column.
+    // voyage id / contribution type) goes through the query builder above; it
+    // cannot go here because it is a JSON path, not a column.
     const order: any = {}
     if (sortBy === "author") {
       order.changeSet = { author: sortOrder }
@@ -907,6 +1032,20 @@ export class DatabaseService {
       where: { batch: { id: batchId } }
     })
     return count > 0
+  }
+
+  // The ids of a batch's contributions that are candidates for bulk approval:
+  // those still Submitted. Published / Rejected / already-Accepted ones are
+  // skipped here rather than reported as refusals, since they are not what the
+  // editor is asking to act on. Each candidate is still run through the full
+  // acceptance path (changeOneStatus), which is where readiness is gated.
+  async getBatchApprovableContributionIds(batchId: number): Promise<string[]> {
+    const rows = await this.contributionRepo.find({
+      where: { batch: { id: batchId }, status: ContributionStatus.Submitted },
+      select: { id: true },
+      order: { id: "ASC" }
+    })
+    return rows.map((r) => r.id)
   }
 
   // Delete a publication batch by id.

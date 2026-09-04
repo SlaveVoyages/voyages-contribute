@@ -271,3 +271,34 @@ test("an empty batch deletes, and a missing one reports not_found", async () => 
     reason: "not_found"
   })
 })
+
+test("a batch's approvable ids are its Submitted contributions only", async () => {
+  const batch = await db.createPublicationBatch({
+    title: "to-approve",
+    comments: ""
+  })
+  await contribution("ap-sub-1", ContributionStatus.Submitted)
+  await contribution("ap-sub-2", ContributionStatus.Submitted)
+  await contribution("ap-acc", ContributionStatus.Accepted)
+  await contribution("ap-rej", ContributionStatus.Rejected)
+  await db.assignContributionToBatch(
+    ["ap-sub-1", "ap-sub-2", "ap-acc", "ap-rej"],
+    batch.id
+  )
+  // Accepted / Rejected are not candidates -- only what is still Submitted.
+  expect(
+    (await db.getBatchApprovableContributionIds(batch.id)).sort()
+  ).toEqual(["ap-sub-1", "ap-sub-2"])
+})
+
+test("a published batch has no approvable contributions", async () => {
+  const batch = await db.createPublicationBatch({
+    title: "pub-approve",
+    comments: ""
+  })
+  await contribution("pa-1", ContributionStatus.Accepted)
+  await db.assignContributionToBatch("pa-1", batch.id)
+  await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
+  await setStatus("pa-1", ContributionStatus.Published)
+  expect(await db.getBatchApprovableContributionIds(batch.id)).toEqual([])
+})

@@ -33,6 +33,15 @@ import {
   changeOneStatus,
   planBulkStatus
 } from "./statusChange"
+import { approveBatchInChunks } from "./batchApprove"
+import {
+  advanceApproveProgress,
+  completeApproveJob,
+  createApproveJob,
+  failApproveJob,
+  getApproveJob,
+  markApproveRunning
+} from "./batchApproveJobs"
 import { areMatch, isExactEntityRef } from "../models/changeSets"
 
 // Load environment variables
@@ -390,6 +399,27 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
           ? requestedAuthor
           : (ownIdentity ?? undefined)
 
+    // Free-text search over the grid. Empty or repeated (array) values are
+    // ignored rather than 400-ing -- an empty box just means "no search".
+    const rawSearch = req.query.search
+    const search =
+      typeof rawSearch === "string" && rawSearch.trim().length > 0
+        ? rawSearch.trim()
+        : undefined
+
+    // Date range on the changeSet timestamp. ISO strings from the filter panel;
+    // parsed defensively so an unparseable value is ignored, not fatal.
+    const parseDate = (name: string): number | undefined => {
+      const raw = req.query[name]
+      if (typeof raw !== "string" || raw.length === 0) {
+        return undefined
+      }
+      const ms = Date.parse(raw)
+      return Number.isFinite(ms) ? ms : undefined
+    }
+    const dateFrom = parseDate("dateFrom")
+    const dateTo = parseDate("dateTo")
+
     // An editor reads every row, so may order by any column. A contributor may
     // order by a sensitive one only when the list is narrowed to their own work
     // -- `author` is set, and for a non-editor that can only be themselves
@@ -403,7 +433,15 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       batchId,
       rootId,
       rootSchema,
-      author
+      author,
+      search,
+      // An editor may match the sensitive changeSet fields on every row; a
+      // contributor only on their own, so a search cannot probe redacted rows.
+      searchSensitiveScope: isEditor
+        ? "all"
+        : { ownIdentity: ownIdentity ?? null },
+      dateFrom,
+      dateTo
     })
 
     // Any contributor may ask what is already being worked on — that is how a
@@ -1175,6 +1213,99 @@ app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
     })
   }
 })
+
+// Bulk-approve a whole batch without enumerating its contributions in the
+// browser. A batch can hold thousands, and accepting them one at a time can
+// outlast an HTTP request, so this starts a job and returns its id; the client
+// polls /batches/approve-jobs/:jobId for progress and the final tally. The
+// eligible (Submitted) contributions are gathered server-side and run through
+// the same acceptance path as the per-row bulk decision, so readiness gating
+// still reports the not-ready ones as refused rather than accepting them.
+app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res) => {
+  try {
+    const batchId = parseInt(req.params.id)
+    if (isNaN(batchId)) {
+      res.status(400).json({
+        error: "Invalid batch ID",
+        details: "Batch ID must be a number"
+      })
+      return
+    }
+    const batch = await dbService.getBatchById(batchId)
+    if (!batch) {
+      res.status(404).json({ error: "Batch not found" })
+      return
+    }
+    // A published batch's contributions are already out; there is nothing left
+    // to approve, and re-deciding them would confuse the publication record.
+    if (batch.published != null) {
+      res.status(409).json({
+        error:
+          "This batch is published; its contributions have already been " +
+          "accepted and published and cannot be approved again."
+      })
+      return
+    }
+
+    const ids = await dbService.getBatchApprovableContributionIds(batchId)
+    const job = createApproveJob({
+      batchId,
+      batchTitle: batch.title,
+      total: ids.length
+    })
+    markApproveRunning(job.jobId)
+
+    const isEditor = hasEditorRole((req as any).user?.app_metadata)
+    const identity = getAuthorIdentity(req) ?? null
+    // Run in the background: the response returns the job id immediately and the
+    // client polls. Any throw fails the job rather than the (already sent)
+    // response.
+    void (async () => {
+      try {
+        const outcome = await approveBatchInChunks(
+          {
+            ids,
+            isEditor,
+            identity,
+            onChunkProcessed: (n) => advanceApproveProgress(job.jobId, n)
+          },
+          statusChangeDeps
+        )
+        completeApproveJob(job.jobId, outcome)
+      } catch (err) {
+        failApproveJob(job.jobId, (err as Error).message)
+      }
+    })()
+
+    res.status(202).json({
+      jobId: job.jobId,
+      total: ids.length,
+      batchId,
+      batchTitle: batch.title
+    })
+  } catch (error) {
+    console.error(`Error approving batch ${req.params.id}:`, error)
+    res.status(500).json({
+      error: "Failed to approve batch",
+      details: (error as Error).message
+    })
+  }
+})
+
+// Poll a batch-approve job started above.
+app.get(
+  "/batches/approve-jobs/:jobId",
+  authenticateJWT,
+  requireEditor,
+  async (req, res) => {
+    const job = getApproveJob(req.params.jobId)
+    if (!job) {
+      res.status(404).json({ error: "Approve job not found" })
+      return
+    }
+    res.json(job)
+  }
+)
 
 // Assign contribution to batch
 app.patch("/assign_to_batch", authenticateJWT, requireEditor, async (req, res) => {
