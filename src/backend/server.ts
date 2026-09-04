@@ -1132,7 +1132,10 @@ app.patch("/edit_batch", authenticateJWT, requireEditor, async (req, res) => {
 })
 
 app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
-  // Delete batch only if no contributions are assigned to it.
+  // A pending batch's contributions are unassigned and the batch deleted -- the
+  // behaviour the delete-batch modal already promises. A published batch that
+  // still holds contributions stays blocked: unassigning them would corrupt the
+  // record of what it published.
   try {
     const batchId = parseInt(req.params.id)
     if (isNaN(batchId)) {
@@ -1142,23 +1145,22 @@ app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
       })
       return
     }
-    // Check if the batch has any contributions
-    const hasContributions = await dbService.batchHasContributions(batchId)
-    if (hasContributions) {
-      res.status(400).json({
-        error: "Cannot delete batch with assigned contributions"
-      })
+    const result = await dbService.deleteBatch(batchId)
+    if (result.deleted) {
+      res.status(204).send()
       return
     }
-    // Delete the batch
-    const success = await dbService.deleteBatch(batchId)
-    if (!success) {
-      res.status(500).json({
-        error: "Failed to delete batch"
-      })
+    if (result.reason === "not_found") {
+      res.status(404).json({ error: "Batch not found" })
       return
     }
-    res.status(204).send()
+    // published_with_contributions
+    res.status(409).json({
+      error:
+        "This batch is published and cannot be deleted while it holds " +
+        "contributions; unassigning them would corrupt the publication record."
+    })
+    return
   } catch (error) {
     console.error(`Error deleting batch ${req.params.id}:`, error)
     res.status(500).json({
@@ -1221,10 +1223,17 @@ app.get("/batches/:filter", authenticateJWT, requireEditor, async (req, res) => 
     const batches = await dbService.getBatchesByStatus(
       filter as "all" | "published" | "pending"
     )
+    // Expose a per-batch contributionCount so the client (e.g. the delete-batch
+    // modal) can show how many contributions a batch holds. The contributions
+    // relation is already loaded, so this is just its length.
+    const withCounts = batches.map((batch) => ({
+      ...batch,
+      contributionCount: batch.contributions?.length ?? 0
+    }))
     res.json({
       filter,
-      count: batches.length,
-      batches
+      count: withCounts.length,
+      batches: withCounts
     })
   } catch (error) {
     console.error(

@@ -193,7 +193,7 @@ test("what a published batch holds is fixed, and what an open one holds is not",
     "error"
   )
   expect(await db.batchHasContributions(open.id)).toBe(false)
-  expect(await db.deleteBatch(open.id)).toBe(true)
+  expect(await db.deleteBatch(open.id)).toMatchObject({ deleted: true })
 })
 
 test("a batch id names a batch, clears the assignment, or is refused", async () => {
@@ -226,4 +226,48 @@ test("a batch id names a batch, clears the assignment, or is refused", async () 
     "error"
   )
   expect(await batchOf("parse-me")).toBeNull()
+})
+
+test("deleting a pending batch unassigns its contributions, which survive", async () => {
+  const batch = await db.createPublicationBatch({ title: "to-delete", comments: "" })
+  await contribution("del-a", ContributionStatus.Accepted)
+  await contribution("del-b", ContributionStatus.Submitted)
+  await db.assignContributionToBatch(["del-a", "del-b"], batch.id)
+  expect(await db.batchHasContributions(batch.id)).toBe(true)
+
+  // The delete-batch modal promises the contributions are unassigned, not
+  // destroyed -- so they outlive the batch with batch = null.
+  expect(await db.deleteBatch(batch.id)).toMatchObject({ deleted: true })
+  expect(await db.getBatchById(batch.id)).toBeNull()
+  expect(await statusOf("del-a")).toBe(ContributionStatus.Accepted)
+  expect(await statusOf("del-b")).toBe(ContributionStatus.Submitted)
+  expect(await batchOf("del-a")).toBeNull()
+  expect(await batchOf("del-b")).toBeNull()
+})
+
+test("a published batch that still holds contributions cannot be deleted", async () => {
+  const batch = await db.createPublicationBatch({ title: "published-hold", comments: "" })
+  await contribution("pub-hold", ContributionStatus.Accepted)
+  await db.assignContributionToBatch("pub-hold", batch.id)
+  await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
+
+  // Unassigning would corrupt the record of what it published, so it stays
+  // blocked and the batch and its member both survive untouched.
+  expect(await db.deleteBatch(batch.id)).toMatchObject({
+    deleted: false,
+    reason: "published_with_contributions"
+  })
+  expect(await db.getBatchById(batch.id)).not.toBeNull()
+  expect(await batchOf("pub-hold")).toBe(batch.id)
+})
+
+test("an empty batch deletes, and a missing one reports not_found", async () => {
+  const batch = await db.createPublicationBatch({ title: "empty", comments: "" })
+  expect(await db.deleteBatch(batch.id)).toMatchObject({ deleted: true })
+  expect(await db.getBatchById(batch.id)).toBeNull()
+
+  expect(await db.deleteBatch(999999)).toMatchObject({
+    deleted: false,
+    reason: "not_found"
+  })
 })

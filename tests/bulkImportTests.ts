@@ -2,8 +2,11 @@ import { expect, test, beforeEach } from "vitest"
 import { hasEditorRole, requireEditor } from "../src/backend/authz"
 import {
   applyContributionTemplate,
-  parseUploadMetadata
+  parseUploadMetadata,
+  resolveContributionComments
 } from "../src/backend/bulkImport"
+import { importCSVFromBuffer } from "../src/tools/csv"
+import { EntityLookUp } from "../src/tools/importer"
 import {
   __resetJobsForTests,
   createJob,
@@ -381,4 +384,58 @@ test("applyContributionTemplate: leaves unknown tokens untouched", () => {
     index: 1
   })
   expect(out).toBe("hello {who} 7")
+})
+
+const ctx = { entityName: "Voyage", filename: "x.csv", id: 1, index: 1 }
+
+test("resolveContributionComments: a per-row comment wins, verbatim", () => {
+  // Used as written -- no {id}/{index} expansion for a literal editor note.
+  expect(
+    resolveContributionComments("  See {id} note  ", "template", ctx, "default")
+  ).toBe("See {id} note")
+})
+
+test("resolveContributionComments: an empty/absent cell falls back to the template", () => {
+  for (const empty of ["", "   ", undefined]) {
+    expect(resolveContributionComments(empty, "From {filename}", ctx, "default")).toBe(
+      "From x.csv"
+    )
+  }
+})
+
+test("resolveContributionComments: empty cell and no template falls back to the default", () => {
+  expect(resolveContributionComments("", undefined, ctx, "default line")).toBe(
+    "default line"
+  )
+  expect(resolveContributionComments(undefined, undefined, ctx, "default line")).toBe(
+    "default line"
+  )
+})
+
+// Resolves anything, so a CSV with only a voyage id maps without external data.
+const anyLookup: EntityLookUp = {
+  lookup: async (schema, _field, value) =>
+    ({
+      entityRef: { type: "existing", schema: schema.name, id: value },
+      state: "original",
+      data: {},
+      lookupValue: String(value)
+    }) as any
+}
+
+test("importCSVFromBuffer: captures the reserved comments column aligned with updates", async () => {
+  const csv = ["voyageid,comments", "1,First note", "2,", "3,Third note"].join(
+    "\n"
+  )
+  const errors: TrackedMappingErrors[] = []
+  const { updates, rowComments } = await importCSVFromBuffer(
+    Buffer.from(csv),
+    "Voyage",
+    anyLookup,
+    errors
+  )
+  // One update per row, and each row's comment sits at the same index -- the
+  // empty cell as an empty string, not a shift onto the next row.
+  expect(updates.length).toBe(3)
+  expect(rowComments).toEqual(["First note", "", "Third note"])
 })

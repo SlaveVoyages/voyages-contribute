@@ -282,6 +282,17 @@ const getFullContribution = (
       })
     : Promise.resolve(null)
 
+// Outcome of deleteBatch. `published_with_contributions` is the one case that
+// stays blocked, and it carries the batch so the caller can name it.
+export type DeleteBatchResult =
+  | { deleted: true }
+  | { deleted: false; reason: "not_found" }
+  | {
+      deleted: false
+      reason: "published_with_contributions"
+      batch: PublicationBatchEntity
+    }
+
 // Initialize repositories
 export class DatabaseService {
   private contributionRepo: Repository<ContributionEntity>
@@ -861,10 +872,45 @@ export class DatabaseService {
     return count > 0
   }
 
-  // Delete a publication batch by id (only call if it has no contributions!)
-  async deleteBatch(batchId: number): Promise<boolean> {
-    const result = await this.batchRepository.delete(batchId)
-    return (result.affected ?? 0) > 0
+  // Delete a publication batch by id.
+  //
+  // Honours what the delete-batch modal promises the editor: a pending batch's
+  // contributions are unassigned (batch -> null) and then the empty batch is
+  // deleted, all in one transaction so a contribution is never left pointing at
+  // a batch that is gone.
+  //
+  // The one case that stays blocked is a *published* batch that still holds
+  // contributions: a published batch is the record of what it published (it
+  // carries a `published` date and `publishedBy`), and unassigning its
+  // contributions would corrupt that record. Mirrors the guard in
+  // assignContributionToBatch, which forbids moving work out of a published
+  // batch for the same reason.
+  async deleteBatch(batchId: number): Promise<DeleteBatchResult> {
+    return await AppDataSource.transaction(async (manager) => {
+      const batch = await manager.findOne(PublicationBatchEntity, {
+        where: { id: batchId }
+      })
+      if (!batch) {
+        return { deleted: false, reason: "not_found" }
+      }
+      const assigned = await manager.find(ContributionEntity, {
+        where: { batch: { id: batchId } },
+        relations: ["batch"]
+      })
+      if (batch.published != null && assigned.length > 0) {
+        return { deleted: false, reason: "published_with_contributions", batch }
+      }
+      if (assigned.length > 0) {
+        for (const c of assigned) {
+          c.batch = null
+        }
+        await manager.save(ContributionEntity, assigned)
+      }
+      const result = await manager.delete(PublicationBatchEntity, batchId)
+      return (result.affected ?? 0) > 0
+        ? { deleted: true }
+        : { deleted: false, reason: "not_found" }
+    })
   }
 
   // Stamp a batch as published.
