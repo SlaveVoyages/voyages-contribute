@@ -1020,12 +1020,6 @@ export class DatabaseService {
   }
 
   // Get batches by publication status
-  // Batches with a per-status tally attached, but without their contributions.
-  // Listing batches once shipped every assigned contribution and its whole
-  // change set -- tens of megabytes for a 7,000-voyage batch, to render a few
-  // numbers. The counts are aggregated in SQL instead: `contributionCount` for
-  // the total and `statusCounts` for the per-status breakdown the client uses
-  // to decide, e.g., whether a batch has anything to bulk-approve.
   async getBatchesByStatus(
     filter: "all" | "published" | "pending"
   ): Promise<BatchListing[]> {
@@ -1044,7 +1038,45 @@ export class DatabaseService {
         // No additional where clause for 'all'
         break
     }
-    return await queryBuilder.getMany()
+    const batches = await queryBuilder.getMany()
+    if (batches.length === 0) {
+      return []
+    }
+    // One row per (batch, status) that actually has contributions, so a batch
+    // with none simply gets no rows and keeps the zeroed counts below.
+    const rows = await this.contributionRepo
+      .createQueryBuilder("contribution")
+      .select("contribution.batchId", "batchId")
+      .addSelect("contribution.status", "status")
+      .addSelect("COUNT(*)", "count")
+      .where("contribution.batchId IN (:...ids)", {
+        ids: batches.map((b) => b.id)
+      })
+      .groupBy("contribution.batchId")
+      .addGroupBy("contribution.status")
+      .getRawMany<{ batchId: number; status: number; count: string | number }>()
+    const counts = new Map<
+      number,
+      Partial<Record<ContributionStatus, number>>
+    >()
+    for (const row of rows) {
+      const forBatch = counts.get(Number(row.batchId)) ?? {}
+      // `COUNT(*)` comes back as a string from some drivers. The status is one
+      // of the enum's values, read back off the column it was stored under.
+      forBatch[Number(row.status) as ContributionStatus] = Number(row.count)
+      counts.set(Number(row.batchId), forBatch)
+    }
+    return batches.map((batch) => {
+      const statusCounts = counts.get(batch.id) ?? {}
+      return {
+        ...batch,
+        statusCounts,
+        contributionCount: Object.values(statusCounts).reduce(
+          (sum, c) => sum + c,
+          0
+        )
+      }
+    })
   }
 
   async deleteContribution(id: string): Promise<boolean> {
