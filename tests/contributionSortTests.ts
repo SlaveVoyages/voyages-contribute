@@ -17,21 +17,40 @@ process.env.CONTRIB_DB_PATH = join(
   "test.db"
 )
 
-const { AppDataSource, DatabaseService, ChangeSetEntity, ContributionEntity } =
-  await import("../src/backend/db")
+const {
+  AppDataSource,
+  DatabaseService,
+  ChangeSetEntity,
+  ContributionEntity,
+  PublicationBatchEntity
+} = await import("../src/backend/db")
 const { ContributionStatus } = await import("../src/models/contribution")
 
+// Each row also carries the fields the derived columns are ordered by:
+// `voyageId` is root.id (the Voyage ID column), `decidedBy` is the Reviewer,
+// and `batch` is the publication batch title it belongs to.
 const rows = [
-  { id: "a", comments: "cherry", timestamp: 300, status: 1 },
-  { id: "b", comments: "apple", timestamp: 100, status: 3 },
-  { id: "c", comments: "banana", timestamp: 200, status: 0 },
-  { id: "d", comments: "damson", timestamp: 400, status: 2 }
+  { id: "a", comments: "cherry", timestamp: 300, status: 1, voyageId: 30, decidedBy: "carol", batch: "Gamma" },
+  { id: "b", comments: "apple", timestamp: 100, status: 3, voyageId: 10, decidedBy: "alice", batch: "Alpha" },
+  { id: "c", comments: "banana", timestamp: 200, status: 0, voyageId: 20, decidedBy: "bob", batch: "Delta" },
+  { id: "d", comments: "damson", timestamp: 400, status: 2, voyageId: 5, decidedBy: "dave", batch: "Beta" }
 ]
 
 await AppDataSource.initialize()
 await AppDataSource.runMigrations({ transaction: "all" })
 
-for (const { id, comments, timestamp, status } of rows) {
+const batchByTitle = new Map<string, InstanceType<typeof PublicationBatchEntity>>()
+for (const title of new Set(rows.map((r) => r.batch))) {
+  batchByTitle.set(
+    title,
+    await AppDataSource.manager.save(PublicationBatchEntity, {
+      title,
+      comments: ""
+    } as InstanceType<typeof PublicationBatchEntity>)
+  )
+}
+
+for (const { id, comments, timestamp, status, voyageId, decidedBy, batch } of rows) {
   const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
     author: "tester",
     title: "t",
@@ -41,16 +60,26 @@ for (const { id, comments, timestamp, status } of rows) {
   })
   await AppDataSource.manager.save(ContributionEntity, {
     id,
-    root: { type: "existing", schema: "Voyage", id: 1 },
+    root: { type: "existing", schema: "Voyage", id: voyageId },
     changeSet,
-    status
+    status,
+    decidedBy,
+    batch: batchByTitle.get(batch)
   } as ContributionEntity)
 }
 
 const service = new DatabaseService()
 
 const idsSortedBy = async (
-  sortBy: "author" | "timestamp" | "comments" | "status" | "id",
+  sortBy:
+    | "author"
+    | "timestamp"
+    | "comments"
+    | "status"
+    | "id"
+    | "decidedBy"
+    | "batch"
+    | "voyage_id",
   sortOrder: "ASC" | "DESC"
 ): Promise<string[]> =>
   (await service.listContributions({ sortBy, sortOrder, limit: 100 })).data.map(
@@ -84,6 +113,27 @@ test("contributions order by status", async () => {
 test("contributions order by id in the direction asked for", async () => {
   expect(await idsSortedBy("id", "ASC")).toEqual(["a", "b", "c", "d"])
   expect(await idsSortedBy("id", "DESC")).toEqual(["d", "c", "b", "a"])
+})
+
+// The derived columns the committee asked to sort as well. Reviewer and Batch
+// are a real column and a to-one relation; Voyage ID is materialized from the
+// root JSON, ordered by a JSON path.
+test("contributions order by reviewer (decidedBy)", async () => {
+  // alice, bob, carol, dave
+  expect(await idsSortedBy("decidedBy", "ASC")).toEqual(["b", "c", "a", "d"])
+  expect(await idsSortedBy("decidedBy", "DESC")).toEqual(["d", "a", "c", "b"])
+})
+
+test("contributions order by batch title", async () => {
+  // Alpha(b), Beta(d), Delta(c), Gamma(a)
+  expect(await idsSortedBy("batch", "ASC")).toEqual(["b", "d", "c", "a"])
+  expect(await idsSortedBy("batch", "DESC")).toEqual(["a", "c", "d", "b"])
+})
+
+test("contributions order by voyage id (root.id via JSON path)", async () => {
+  // Numeric ids 5(d), 10(b), 20(c), 30(a), ordered numerically.
+  expect(await idsSortedBy("voyage_id", "ASC")).toEqual(["d", "b", "c", "a"])
+  expect(await idsSortedBy("voyage_id", "DESC")).toEqual(["a", "c", "b", "d"])
 })
 
 test("statuses are the ones the app uses", () => {

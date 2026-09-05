@@ -128,6 +128,10 @@ export const importCSV = (
  * the importer actually looked at (capped by `maxRows` if supplied). Callers
  * use this to drive progress accounting that reflects the input CSV rather
  * than the post-mapping update count, which excludes rows that errored.
+ *
+ * `rowComments` is aligned with `updates`: rowComments[i] is the reserved
+ * `comments` cell of the CSV row that produced updates[i] (empty string when
+ * that row had none). runImport uses it for per-row contribution comments.
  */
 export const importCSVFromBuffer = async (
   buffer: Buffer,
@@ -135,18 +139,24 @@ export const importCSVFromBuffer = async (
   lookup: EntityLookUp,
   errors: TrackedMappingErrors[],
   maxRows?: number
-): Promise<{ updates: EntityUpdate[]; rowCount: number }> => {
+): Promise<{
+  updates: EntityUpdate[]
+  rowCount: number
+  rowComments: string[]
+}> => {
   const { data } = parseCSVBuffer(buffer)
   const { mapping, schema } = resolveMapping(schemaName)
   const rowCount =
     maxRows !== undefined ? Math.min(data.length, maxRows) : data.length
+  const rowComments: string[] = []
   const updates = await MapDataSourceToChangeSets(
     data,
     mapping,
     schema,
     lookup,
     errors,
-    maxRows
+    maxRows,
+    rowComments
   )
-  return { updates, rowCount }
+  return { updates, rowCount, rowComments }
 }
