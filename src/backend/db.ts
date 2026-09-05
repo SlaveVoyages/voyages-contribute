@@ -359,13 +359,6 @@ export type DeleteBatchResult =
       batch: PublicationBatchEntity
     }
 
-// A batch in a listing: the row plus its aggregated counts, without the
-// contributions themselves.
-export type BatchListing = PublicationBatchEntity & {
-  contributionCount: number
-  statusCounts: Partial<Record<ContributionStatus, number>>
-}
-
 // Initialize repositories
 export class DatabaseService {
   private contributionRepo: Repository<ContributionEntity>
