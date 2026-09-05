@@ -193,7 +193,7 @@ test("what a published batch holds is fixed, and what an open one holds is not",
     "error"
   )
   expect(await db.batchHasContributions(open.id)).toBe(false)
-  expect(await db.deleteBatch(open.id)).toBe(true)
+  expect(await db.deleteBatch(open.id)).toMatchObject({ deleted: true })
 })
 
 test("a batch id names a batch, clears the assignment, or is refused", async () => {
@@ -226,4 +226,102 @@ test("a batch id names a batch, clears the assignment, or is refused", async () 
     "error"
   )
   expect(await batchOf("parse-me")).toBeNull()
+})
+
+test("deleting a pending batch unassigns its contributions, which survive", async () => {
+  const batch = await db.createPublicationBatch({ title: "to-delete", comments: "" })
+  await contribution("del-a", ContributionStatus.Accepted)
+  await contribution("del-b", ContributionStatus.Submitted)
+  await db.assignContributionToBatch(["del-a", "del-b"], batch.id)
+  expect(await db.batchHasContributions(batch.id)).toBe(true)
+
+  // The delete-batch modal promises the contributions are unassigned, not
+  // destroyed -- so they outlive the batch with batch = null.
+  expect(await db.deleteBatch(batch.id)).toMatchObject({ deleted: true })
+  expect(await db.getBatchById(batch.id)).toBeNull()
+  expect(await statusOf("del-a")).toBe(ContributionStatus.Accepted)
+  expect(await statusOf("del-b")).toBe(ContributionStatus.Submitted)
+  expect(await batchOf("del-a")).toBeNull()
+  expect(await batchOf("del-b")).toBeNull()
+})
+
+test("a published batch that still holds contributions cannot be deleted", async () => {
+  const batch = await db.createPublicationBatch({ title: "published-hold", comments: "" })
+  await contribution("pub-hold", ContributionStatus.Accepted)
+  await db.assignContributionToBatch("pub-hold", batch.id)
+  await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
+
+  // Unassigning would corrupt the record of what it published, so it stays
+  // blocked and the batch and its member both survive untouched.
+  expect(await db.deleteBatch(batch.id)).toMatchObject({
+    deleted: false,
+    reason: "published_with_contributions"
+  })
+  expect(await db.getBatchById(batch.id)).not.toBeNull()
+  expect(await batchOf("pub-hold")).toBe(batch.id)
+})
+
+test("an empty batch deletes, and a missing one reports not_found", async () => {
+  const batch = await db.createPublicationBatch({ title: "empty", comments: "" })
+  expect(await db.deleteBatch(batch.id)).toMatchObject({ deleted: true })
+  expect(await db.getBatchById(batch.id)).toBeNull()
+
+  expect(await db.deleteBatch(999999)).toMatchObject({
+    deleted: false,
+    reason: "not_found"
+  })
+})
+
+test("a batch's approvable ids are its WorkInProgress and Submitted contributions", async () => {
+  const batch = await db.createPublicationBatch({
+    title: "to-approve",
+    comments: ""
+  })
+  await contribution("ap-wip", ContributionStatus.WorkInProgress)
+  await contribution("ap-sub", ContributionStatus.Submitted)
+  await contribution("ap-acc", ContributionStatus.Accepted)
+  await contribution("ap-rej", ContributionStatus.Rejected)
+  await db.assignContributionToBatch(
+    ["ap-wip", "ap-sub", "ap-acc", "ap-rej"],
+    batch.id
+  )
+  // Imports land as WorkInProgress, so both it and Submitted are candidates;
+  // already-Accepted / Rejected are not.
+  expect(
+    (await db.getBatchApprovableContributionIds(batch.id)).sort()
+  ).toEqual(["ap-sub", "ap-wip"])
+})
+
+test("a published batch has no approvable contributions", async () => {
+  const batch = await db.createPublicationBatch({
+    title: "pub-approve",
+    comments: ""
+  })
+  await contribution("pa-1", ContributionStatus.Accepted)
+  await db.assignContributionToBatch("pa-1", batch.id)
+  await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
+  await setStatus("pa-1", ContributionStatus.Published)
+  expect(await db.getBatchApprovableContributionIds(batch.id)).toEqual([])
+})
+
+test("a listed batch carries its contribution count and per-status tally", async () => {
+  const batch = await db.createPublicationBatch({
+    title: "counted",
+    comments: ""
+  })
+  await contribution("ct-sub-1", ContributionStatus.Submitted)
+  await contribution("ct-sub-2", ContributionStatus.Submitted)
+  await contribution("ct-acc", ContributionStatus.Accepted)
+  await db.assignContributionToBatch(
+    ["ct-sub-1", "ct-sub-2", "ct-acc"],
+    batch.id
+  )
+  const listed = (await db.getBatchesByStatus("all")).find(
+    (b) => b.id === batch.id
+  )!
+  expect(listed.contributionCount).toBe(3)
+  expect(listed.statusCounts[ContributionStatus.Submitted]).toBe(2)
+  expect(listed.statusCounts[ContributionStatus.Accepted]).toBe(1)
+  // The contributions themselves are not shipped with the listing.
+  expect((listed as { contributions?: unknown }).contributions).toBeUndefined()
 })

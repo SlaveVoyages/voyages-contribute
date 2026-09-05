@@ -13,7 +13,12 @@ import {
   In,
   EntityManager,
   IsNull,
-  Raw
+  Raw,
+  Brackets,
+  Between,
+  MoreThanOrEqual,
+  LessThanOrEqual,
+  SelectQueryBuilder
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
@@ -282,6 +287,52 @@ const LIKE_ESCAPE = "!"
 const likeLiteral = (value: string): string =>
   value.replace(/[!%_]/g, (char) => `${LIKE_ESCAPE}${char}`)
 
+/**
+ * Applies a listContributions sort to a query builder. Used on the search /
+ * voyage-id path, which cannot use a find-options `order` object. Relation
+ * columns are named through the aliases setFindOptions generates for the
+ * `contribAllRelations` joins (`<mainAlias>__<relation>`). `id` is always the
+ * tiebreaker beneath the primary column, and takes the caller's direction when
+ * it is itself the primary.
+ */
+const applyOrderToQueryBuilder = (
+  qb: SelectQueryBuilder<ContributionEntity>,
+  sortBy: string,
+  sortOrder: "ASC" | "DESC"
+): void => {
+  switch (sortBy) {
+    case "voyage_id":
+      qb.addSelect(
+        "json_extract(contribution.root, '$.id')",
+        "voyage_sort_key"
+      ).orderBy("voyage_sort_key", sortOrder)
+      break
+    case "author":
+      qb.orderBy("contribution__changeSet.author", sortOrder)
+      break
+    case "timestamp":
+      qb.orderBy("contribution__changeSet.timestamp", sortOrder)
+      break
+    case "comments":
+      qb.orderBy("contribution__changeSet.comments", sortOrder)
+      break
+    case "status":
+      qb.orderBy("contribution.status", sortOrder)
+      break
+    case "decidedBy":
+      qb.orderBy("contribution.decidedBy", sortOrder)
+      break
+    case "batch":
+      qb.orderBy("contribution__batch.title", sortOrder)
+      break
+    default:
+      qb.orderBy("contribution.id", sortOrder)
+  }
+  if (sortBy !== "id") {
+    qb.addOrderBy("contribution.id", "ASC")
+  }
+}
+
 const getFullContribution = (
   manager: EntityManager,
   id: string
@@ -296,6 +347,24 @@ const getFullContribution = (
         relations: contribAllRelations
       })
     : Promise.resolve(null)
+
+// Outcome of deleteBatch. `published_with_contributions` is the one case that
+// stays blocked, and it carries the batch so the caller can name it.
+export type DeleteBatchResult =
+  | { deleted: true }
+  | { deleted: false; reason: "not_found" }
+  | {
+      deleted: false
+      reason: "published_with_contributions"
+      batch: PublicationBatchEntity
+    }
+
+// A batch in a listing: the row plus its aggregated counts, without the
+// contributions themselves.
+export type BatchListing = PublicationBatchEntity & {
+  contributionCount: number
+  statusCounts: Partial<Record<ContributionStatus, number>>
+}
 
 // Initialize repositories
 export class DatabaseService {
@@ -377,8 +446,33 @@ export class DatabaseService {
       rootId?: string | number
       /** Schema of the root entity, within which its id is unique. */
       rootSchema?: string
-      sortBy?: "author" | "timestamp" | "comments" | "status" | "id"
+      sortBy?:
+        | "author"
+        | "timestamp"
+        | "comments"
+        | "status"
+        | "id"
+        | "decidedBy"
+        | "batch"
+        | "voyage_id"
       sortOrder?: "ASC" | "DESC"
+      /**
+       * Free-text search. Case-insensitive OR match across the contribution id,
+       * the root voyage id, and (subject to visibility) the changeSet author /
+       * title / comments.
+       */
+      search?: string
+      /**
+       * Who may be matched on the sensitive changeSet fields (author, title,
+       * comments). "all" for an editor -- every row. For a contributor, only
+       * their own rows, named by identity, so a text search cannot probe the
+       * redacted content of other people's contributions. The public fields
+       * (contribution id, voyage id) are always searchable by anyone.
+       */
+      searchSensitiveScope?: "all" | { ownIdentity: string | null }
+      /** Inclusive lower / upper bounds on the changeSet timestamp (epoch ms). */
+      dateFrom?: number
+      dateTo?: number
     } = {}
   ): Promise<{
     data: ContributionEntity[]
@@ -395,7 +489,11 @@ export class DatabaseService {
       rootId,
       rootSchema,
       sortBy = "id",
-      sortOrder = "ASC"
+      sortOrder = "ASC",
+      search,
+      searchSensitiveScope = "all",
+      dateFrom,
+      dateTo
     } = options
 
     // Build where clause
@@ -429,19 +527,32 @@ export class DatabaseService {
     // for every author this code writes. `LOWER()` would only add a second,
     // different folding — SQL folds by collation and JavaScript by Unicode —
     // on top of one the data does not need.
+    // Author and the date range both live on the changeSet, so they are built
+    // into one nested clause -- a where holds a single condition per relation.
+    const changeSetWhere: any = {}
     if (author) {
       const identity = authorIdentity(author)
-      where.changeSet = {
-        author: Raw(
-          (column) =>
-            `(${column} = :authorIdentity` +
-            ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
-          {
-            authorIdentity: identity,
-            authorSuffix: `%<${likeLiteral(identity)}>`
-          }
-        )
-      }
+      changeSetWhere.author = Raw(
+        (column) =>
+          `(${column} = :authorIdentity` +
+          ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
+        {
+          authorIdentity: identity,
+          authorSuffix: `%<${likeLiteral(identity)}>`
+        }
+      )
+    }
+    // Date range on the changeSet timestamp -- the same value the Date column
+    // shows and `sortBy: "timestamp"` orders by. Open-ended on either side.
+    if (dateFrom !== undefined && dateTo !== undefined) {
+      changeSetWhere.timestamp = Between(dateFrom, dateTo)
+    } else if (dateFrom !== undefined) {
+      changeSetWhere.timestamp = MoreThanOrEqual(dateFrom)
+    } else if (dateTo !== undefined) {
+      changeSetWhere.timestamp = LessThanOrEqual(dateTo)
+    }
+    if (Object.keys(changeSetWhere).length > 0) {
+      where.changeSet = changeSetWhere
     }
 
     // `root` is a simple-json column, so it is matched as text. This lets a
@@ -495,14 +606,79 @@ export class DatabaseService {
       )
     }
 
+    // Calculate offset
+    const offset = (page - 1) * limit
+
+    // A free-text search, or ordering by the voyage id, both need a query
+    // builder: the search is an OR group across columns and a relation, and the
+    // voyage id lives inside `root` (a simple-json column) so it has no column
+    // of its own to name in a find-options `order`.
+    const useQueryBuilder = search !== undefined || sortBy === "voyage_id"
+
+    if (useQueryBuilder) {
+      const qb = this.contributionRepo
+        .createQueryBuilder("contribution")
+        .setFindOptions({ where, relations: contribAllRelations })
+
+      if (search !== undefined) {
+        // Case-insensitive %term% match. LIKE folds case for ASCII on both
+        // sqlite and the app's MySQL collation; the term is escaped so % and _
+        // in the query are literals.
+        const term = `%${likeLiteral(search)}%`
+        qb.andWhere(
+          new Brackets((b) => {
+            // Public fields, searchable by anyone: the contribution id and the
+            // voyage id (root.id, via the same JSON path the sort uses).
+            b.where(
+              `contribution.id LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
+              { searchTerm: term }
+            ).orWhere(
+              `json_extract(contribution.root, '$.id') LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
+              { searchTerm: term }
+            )
+            // Sensitive fields (author / title / comments) live on the
+            // changeSet. Matched via a subquery keyed by the FK so this does not
+            // depend on the join alias. For an editor, across every row; for a
+            // contributor, only their own rows -- named by identity -- so a
+            // search cannot probe the redacted content of other people's work.
+            const sensitive =
+              `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+              ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
+            if (searchSensitiveScope === "all") {
+              b.orWhere(
+                `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
+                { searchTerm: term }
+              )
+            } else if (searchSensitiveScope.ownIdentity) {
+              const own = searchSensitiveScope.ownIdentity
+              b.orWhere(
+                "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
+                  `(cs.author = :searchOwn OR cs.author LIKE :searchOwnSuffix ESCAPE '${LIKE_ESCAPE}')` +
+                  ` AND (${sensitive}))`,
+                {
+                  searchTerm: term,
+                  searchOwn: own,
+                  searchOwnSuffix: `%<${likeLiteral(own)}>`
+                }
+              )
+            }
+            // An anonymous contributor (no identity) matches only the public
+            // fields above -- nothing more is added.
+          })
+        )
+      }
+
+      applyOrderToQueryBuilder(qb, sortBy, sortOrder)
+      const [data, total] = await qb.skip(offset).take(limit).getManyAndCount()
+      return { data, total, page, limit }
+    }
+
     // Build order clause.
     //
-    // Only real columns are offered. A caller can ask to order by the voyage a
-    // contribution is rooted at, or by what kind of contribution it is, but
-    // both of those live inside `root`, a simple-json column: ordering by it
-    // sorts the serialised text, which puts "10" before "9" and groups by
-    // whichever key JSON.stringify happened to emit first. That is not the
-    // order anyone asked for, so it is not offered rather than answered wrong.
+    // Real columns and to-one relations are offered. Ordering by `root` (the
+    // voyage id / contribution type) goes through the query builder above; it
+    // cannot go here because it is a JSON path, not a column.
     const order: any = {}
     if (sortBy === "author") {
       order.changeSet = { author: sortOrder }
@@ -512,14 +688,18 @@ export class DatabaseService {
       order.changeSet = { comments: sortOrder }
     } else if (sortBy === "status") {
       order.status = sortOrder
+    } else if (sortBy === "decidedBy") {
+      order.decidedBy = sortOrder
+    } else if (sortBy === "batch") {
+      // `batch` is a to-one relation, so its rows are not multiplied by the
+      // join and pagination stays correct. Unassigned rows have a null title,
+      // which the database groups at one end of the order.
+      order.batch = { title: sortOrder }
     }
     // `id` doubles as the tiebreaker, so it is always in the clause. When it is
     // what the caller asked to order by, it takes their direction; otherwise it
     // stays ASC to break ties stably beneath the primary column.
     order.id = sortBy === "id" ? sortOrder : "ASC"
-
-    // Calculate offset
-    const offset = (page - 1) * limit
 
     // Execute queries
     const [data, total] = await this.contributionRepo.findAndCount({
@@ -840,19 +1020,12 @@ export class DatabaseService {
   }
 
   // Get batches by publication status
-  /**
-   * The batch list, with what each batch holds counted rather than attached.
-   *
-   * This used to `leftJoinAndSelect` the contributions *and* their change sets,
-   * which meant every listing carried the full JSON diff of every contribution
-   * in every batch -- thirty-odd megabytes and six seconds for a screen that
-   * only ever renders numbers. Nothing on the client read a change: the batch
-   * table shows a count, and publishability is decided from counts per status.
-   *
-   * So the counts are what is sent. They come from one grouped query rather
-   * than a join, so the payload is a few rows of integers whatever the batches
-   * contain.
-   */
+  // Batches with a per-status tally attached, but without their contributions.
+  // Listing batches once shipped every assigned contribution and its whole
+  // change set -- tens of megabytes for a 7,000-voyage batch, to render a few
+  // numbers. The counts are aggregated in SQL instead: `contributionCount` for
+  // the total and `statusCounts` for the per-status breakdown the client uses
+  // to decide, e.g., whether a batch has anything to bulk-approve.
   async getBatchesByStatus(
     filter: "all" | "published" | "pending"
   ): Promise<BatchListing[]> {
@@ -871,45 +1044,7 @@ export class DatabaseService {
         // No additional where clause for 'all'
         break
     }
-    const batches = await queryBuilder.getMany()
-    if (batches.length === 0) {
-      return []
-    }
-    // One row per (batch, status) that actually has contributions, so a batch
-    // with none simply gets no rows and keeps the zeroed counts below.
-    const rows = await this.contributionRepo
-      .createQueryBuilder("contribution")
-      .select("contribution.batchId", "batchId")
-      .addSelect("contribution.status", "status")
-      .addSelect("COUNT(*)", "count")
-      .where("contribution.batchId IN (:...ids)", {
-        ids: batches.map((b) => b.id)
-      })
-      .groupBy("contribution.batchId")
-      .addGroupBy("contribution.status")
-      .getRawMany<{ batchId: number; status: number; count: string | number }>()
-    const counts = new Map<
-      number,
-      Partial<Record<ContributionStatus, number>>
-    >()
-    for (const row of rows) {
-      const forBatch = counts.get(Number(row.batchId)) ?? {}
-      // `COUNT(*)` comes back as a string from some drivers. The status is one
-      // of the enum's values, read back off the column it was stored under.
-      forBatch[Number(row.status) as ContributionStatus] = Number(row.count)
-      counts.set(Number(row.batchId), forBatch)
-    }
-    return batches.map((batch) => {
-      const statusCounts = counts.get(batch.id) ?? {}
-      return {
-        ...batch,
-        statusCounts,
-        contributionCount: Object.values(statusCounts).reduce(
-          (sum, c) => sum + c,
-          0
-        )
-      }
-    })
+    return await queryBuilder.getMany()
   }
 
   async deleteContribution(id: string): Promise<boolean> {
@@ -925,10 +1060,68 @@ export class DatabaseService {
     return count > 0
   }
 
-  // Delete a publication batch by id (only call if it has no contributions!)
-  async deleteBatch(batchId: number): Promise<boolean> {
-    const result = await this.batchRepository.delete(batchId)
-    return (result.affected ?? 0) > 0
+  // The ids of a batch's contributions that are candidates for bulk approval:
+  // anything not already decided or published -- WorkInProgress or Submitted.
+  // Bulk imports land as WorkInProgress, so restricting to Submitted alone left
+  // an imported batch with nothing to approve. Already-Accepted / Rejected /
+  // Published are skipped here rather than reported as refusals, since they are
+  // not what the editor is asking to act on. Each candidate is still run through
+  // the full acceptance path (changeOneStatus), which is where readiness is
+  // gated, and which already permits an editor to accept a WorkInProgress draft.
+  async getBatchApprovableContributionIds(batchId: number): Promise<string[]> {
+    const rows = await this.contributionRepo.find({
+      where: {
+        batch: { id: batchId },
+        status: In([
+          ContributionStatus.WorkInProgress,
+          ContributionStatus.Submitted
+        ])
+      },
+      select: { id: true },
+      order: { id: "ASC" }
+    })
+    return rows.map((r) => r.id)
+  }
+
+  // Delete a publication batch by id.
+  //
+  // Honours what the delete-batch modal promises the editor: a pending batch's
+  // contributions are unassigned (batch -> null) and then the empty batch is
+  // deleted, all in one transaction so a contribution is never left pointing at
+  // a batch that is gone.
+  //
+  // The one case that stays blocked is a *published* batch that still holds
+  // contributions: a published batch is the record of what it published (it
+  // carries a `published` date and `publishedBy`), and unassigning its
+  // contributions would corrupt that record. Mirrors the guard in
+  // assignContributionToBatch, which forbids moving work out of a published
+  // batch for the same reason.
+  async deleteBatch(batchId: number): Promise<DeleteBatchResult> {
+    return await AppDataSource.transaction(async (manager) => {
+      const batch = await manager.findOne(PublicationBatchEntity, {
+        where: { id: batchId }
+      })
+      if (!batch) {
+        return { deleted: false, reason: "not_found" }
+      }
+      const assigned = await manager.find(ContributionEntity, {
+        where: { batch: { id: batchId } },
+        relations: ["batch"]
+      })
+      if (batch.published != null && assigned.length > 0) {
+        return { deleted: false, reason: "published_with_contributions", batch }
+      }
+      if (assigned.length > 0) {
+        for (const c of assigned) {
+          c.batch = null
+        }
+        await manager.save(ContributionEntity, assigned)
+      }
+      const result = await manager.delete(PublicationBatchEntity, batchId)
+      return (result.affected ?? 0) > 0
+        ? { deleted: true }
+        : { deleted: false, reason: "not_found" }
+    })
   }
 
   // Stamp a batch as published.
