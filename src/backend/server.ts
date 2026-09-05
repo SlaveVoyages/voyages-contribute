@@ -1357,20 +1357,17 @@ app.get("/batches/:filter", authenticateJWT, requireEditor, async (req, res) => 
       })
       return
     }
+    // Each batch already carries contributionCount and statusCounts (aggregated
+    // in SQL); the contributions themselves are not shipped. The client reads
+    // contributionCount for the delete-batch modal and statusCounts to know how
+    // many are approvable.
     const batches = await dbService.getBatchesByStatus(
       filter as "all" | "published" | "pending"
     )
-    // Expose a per-batch contributionCount so the client (e.g. the delete-batch
-    // modal) can show how many contributions a batch holds. The contributions
-    // relation is already loaded, so this is just its length.
-    const withCounts = batches.map((batch) => ({
-      ...batch,
-      contributionCount: batch.contributions?.length ?? 0
-    }))
     res.json({
       filter,
-      count: withCounts.length,
-      batches: withCounts
+      count: batches.length,
+      batches
     })
   } catch (error) {
     console.error(

@@ -272,23 +272,24 @@ test("an empty batch deletes, and a missing one reports not_found", async () => 
   })
 })
 
-test("a batch's approvable ids are its Submitted contributions only", async () => {
+test("a batch's approvable ids are its WorkInProgress and Submitted contributions", async () => {
   const batch = await db.createPublicationBatch({
     title: "to-approve",
     comments: ""
   })
-  await contribution("ap-sub-1", ContributionStatus.Submitted)
-  await contribution("ap-sub-2", ContributionStatus.Submitted)
+  await contribution("ap-wip", ContributionStatus.WorkInProgress)
+  await contribution("ap-sub", ContributionStatus.Submitted)
   await contribution("ap-acc", ContributionStatus.Accepted)
   await contribution("ap-rej", ContributionStatus.Rejected)
   await db.assignContributionToBatch(
-    ["ap-sub-1", "ap-sub-2", "ap-acc", "ap-rej"],
+    ["ap-wip", "ap-sub", "ap-acc", "ap-rej"],
     batch.id
   )
-  // Accepted / Rejected are not candidates -- only what is still Submitted.
+  // Imports land as WorkInProgress, so both it and Submitted are candidates;
+  // already-Accepted / Rejected are not.
   expect(
     (await db.getBatchApprovableContributionIds(batch.id)).sort()
-  ).toEqual(["ap-sub-1", "ap-sub-2"])
+  ).toEqual(["ap-sub", "ap-wip"])
 })
 
 test("a published batch has no approvable contributions", async () => {
@@ -301,4 +302,26 @@ test("a published batch has no approvable contributions", async () => {
   await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
   await setStatus("pa-1", ContributionStatus.Published)
   expect(await db.getBatchApprovableContributionIds(batch.id)).toEqual([])
+})
+
+test("a listed batch carries its contribution count and per-status tally", async () => {
+  const batch = await db.createPublicationBatch({
+    title: "counted",
+    comments: ""
+  })
+  await contribution("ct-sub-1", ContributionStatus.Submitted)
+  await contribution("ct-sub-2", ContributionStatus.Submitted)
+  await contribution("ct-acc", ContributionStatus.Accepted)
+  await db.assignContributionToBatch(
+    ["ct-sub-1", "ct-sub-2", "ct-acc"],
+    batch.id
+  )
+  const listed = (await db.getBatchesByStatus("all")).find(
+    (b) => b.id === batch.id
+  )!
+  expect(listed.contributionCount).toBe(3)
+  expect(listed.statusCounts[ContributionStatus.Submitted]).toBe(2)
+  expect(listed.statusCounts[ContributionStatus.Accepted]).toBe(1)
+  // The contributions themselves are not shipped with the listing.
+  expect((listed as { contributions?: unknown }).contributions).toBeUndefined()
 })

@@ -344,6 +344,13 @@ export type DeleteBatchResult =
       batch: PublicationBatchEntity
     }
 
+// A batch in a listing: the row plus its aggregated counts, without the
+// contributions themselves.
+export type BatchListing = PublicationBatchEntity & {
+  contributionCount: number
+  statusCounts: Partial<Record<ContributionStatus, number>>
+}
+
 // Initialize repositories
 export class DatabaseService {
   private contributionRepo: Repository<ContributionEntity>
@@ -998,13 +1005,17 @@ export class DatabaseService {
   }
 
   // Get batches by publication status
+  // Batches with a per-status tally attached, but without their contributions.
+  // Listing batches once shipped every assigned contribution and its whole
+  // change set -- tens of megabytes for a 7,000-voyage batch, to render a few
+  // numbers. The counts are aggregated in SQL instead: `contributionCount` for
+  // the total and `statusCounts` for the per-status breakdown the client uses
+  // to decide, e.g., whether a batch has anything to bulk-approve.
   async getBatchesByStatus(
     filter: "all" | "published" | "pending"
-  ): Promise<PublicationBatchEntity[]> {
+  ): Promise<BatchListing[]> {
     const queryBuilder = this.batchRepository
       .createQueryBuilder("batch")
-      .leftJoinAndSelect("batch.contributions", "contributions")
-      .leftJoinAndSelect("contributions.changeSet", "changeSet")
       .orderBy("batch.id", "DESC")
     switch (filter) {
       case "published":
@@ -1018,7 +1029,39 @@ export class DatabaseService {
         // No additional where clause for 'all'
         break
     }
-    return await queryBuilder.getMany()
+    const batches = await queryBuilder.getMany()
+    if (batches.length === 0) {
+      return []
+    }
+    // One grouped pass over the assigned contributions of every listed batch.
+    const rows = await this.contributionRepo
+      .createQueryBuilder("contribution")
+      .select("contribution.batchId", "batchId")
+      .addSelect("contribution.status", "status")
+      .addSelect("COUNT(*)", "count")
+      .where("contribution.batchId IN (:...batchIds)", {
+        batchIds: batches.map((b) => b.id)
+      })
+      .groupBy("contribution.batchId")
+      .addGroupBy("contribution.status")
+      .getRawMany<{ batchId: number; status: number; count: number }>()
+    const tallies = new Map<
+      number,
+      { contributionCount: number; statusCounts: Partial<Record<ContributionStatus, number>> }
+    >()
+    for (const b of batches) {
+      tallies.set(b.id, { contributionCount: 0, statusCounts: {} })
+    }
+    for (const row of rows) {
+      const tally = tallies.get(Number(row.batchId))
+      if (!tally) continue
+      const n = Number(row.count)
+      tally.statusCounts[row.status as ContributionStatus] = n
+      tally.contributionCount += n
+    }
+    return batches.map((batch) =>
+      Object.assign(batch, tallies.get(batch.id)!)
+    ) as BatchListing[]
   }
 
   async deleteContribution(id: string): Promise<boolean> {
@@ -1035,13 +1078,22 @@ export class DatabaseService {
   }
 
   // The ids of a batch's contributions that are candidates for bulk approval:
-  // those still Submitted. Published / Rejected / already-Accepted ones are
-  // skipped here rather than reported as refusals, since they are not what the
-  // editor is asking to act on. Each candidate is still run through the full
-  // acceptance path (changeOneStatus), which is where readiness is gated.
+  // anything not already decided or published -- WorkInProgress or Submitted.
+  // Bulk imports land as WorkInProgress, so restricting to Submitted alone left
+  // an imported batch with nothing to approve. Already-Accepted / Rejected /
+  // Published are skipped here rather than reported as refusals, since they are
+  // not what the editor is asking to act on. Each candidate is still run through
+  // the full acceptance path (changeOneStatus), which is where readiness is
+  // gated, and which already permits an editor to accept a WorkInProgress draft.
   async getBatchApprovableContributionIds(batchId: number): Promise<string[]> {
     const rows = await this.contributionRepo.find({
-      where: { batch: { id: batchId }, status: ContributionStatus.Submitted },
+      where: {
+        batch: { id: batchId },
+        status: In([
+          ContributionStatus.WorkInProgress,
+          ContributionStatus.Submitted
+        ])
+      },
       select: { id: true },
       order: { id: "ASC" }
     })
