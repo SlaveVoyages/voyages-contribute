@@ -300,30 +300,44 @@ const applyOrderToQueryBuilder = (
   sortBy: string,
   sortOrder: "ASC" | "DESC"
 ): void => {
+  // A relation column is ordered through a correlated subquery selected under a
+  // dotless alias, not the relation's join alias. Two reasons: the join alias
+  // setFindOptions generates is a TypeORM-internal name (0.3 spells the
+  // changeSet join `contribution__contribution_changeSet`, not
+  // `contribution__changeSet`), and the join-based pagination path parses a
+  // dotted orderBy as `alias.column`, which a subquery or json_extract(...) is
+  // not. Selecting the value under a plain alias sidesteps both.
+  const orderBySubquery = (sql: string) =>
+    qb.addSelect(sql, "list_sort_key").orderBy("list_sort_key", sortOrder)
   switch (sortBy) {
     case "voyage_id":
-      qb.addSelect(
-        "json_extract(contribution.root, '$.id')",
-        "voyage_sort_key"
-      ).orderBy("voyage_sort_key", sortOrder)
+      orderBySubquery("json_extract(contribution.root, '$.id')")
       break
     case "author":
-      qb.orderBy("contribution__changeSet.author", sortOrder)
+      orderBySubquery(
+        "(SELECT cs.author FROM changesets cs WHERE cs.id = contribution.changeSetId)"
+      )
       break
     case "timestamp":
-      qb.orderBy("contribution__changeSet.timestamp", sortOrder)
+      orderBySubquery(
+        "(SELECT cs.timestamp FROM changesets cs WHERE cs.id = contribution.changeSetId)"
+      )
       break
     case "comments":
-      qb.orderBy("contribution__changeSet.comments", sortOrder)
+      orderBySubquery(
+        "(SELECT cs.comments FROM changesets cs WHERE cs.id = contribution.changeSetId)"
+      )
+      break
+    case "batch":
+      orderBySubquery(
+        "(SELECT b.title FROM publication_batches b WHERE b.id = contribution.batchId)"
+      )
       break
     case "status":
       qb.orderBy("contribution.status", sortOrder)
       break
     case "decidedBy":
       qb.orderBy("contribution.decidedBy", sortOrder)
-      break
-    case "batch":
-      qb.orderBy("contribution__batch.title", sortOrder)
       break
     default:
       qb.orderBy("contribution.id", sortOrder)
@@ -1108,6 +1122,32 @@ export class DatabaseService {
     return rows.map((r) => r.id)
   }
 
+  // unpublished. Used to re-validate each chunk of a running bulk-approve so a concurrent assign/unassign/publish cannot make it act on stale ids.
+  async filterBatchApprovableIds(
+    batchId: number,
+    ids: string[]
+  ): Promise<string[]> {
+    if (ids.length === 0) {
+      return []
+    }
+    const batch = await this.batchRepository.findOne({ where: { id: batchId } })
+    if (!batch || batch.published != null) {
+      return []
+    }
+    const rows = await this.contributionRepo.find({
+      where: {
+        id: In(ids),
+        batch: { id: batchId },
+        status: In([
+          ContributionStatus.WorkInProgress,
+          ContributionStatus.Submitted
+        ])
+      },
+      select: { id: true }
+    })
+    return rows.map((r) => r.id)
+  }
+
   // Delete a publication batch by id.
   //
   // Honours what the delete-batch modal promises the editor: a pending batch's
@@ -1129,19 +1169,23 @@ export class DatabaseService {
       if (!batch) {
         return { deleted: false, reason: "not_found" }
       }
-      const assigned = await manager.find(ContributionEntity, {
-        where: { batch: { id: batchId } },
-        relations: ["batch"]
-      })
-      if (batch.published != null && assigned.length > 0) {
-        return { deleted: false, reason: "published_with_contributions", batch }
-      }
-      if (assigned.length > 0) {
-        for (const c of assigned) {
-          c.batch = null
+      // The published guard only needs to know whether any contribution is
+      // still attached -- a count, not the rows themselves.
+      if (batch.published != null) {
+        const stillHeld = await manager.count(ContributionEntity, {
+          where: { batch: { id: batchId } }
+        })
+        if (stillHeld > 0) {
+          return { deleted: false, reason: "published_with_contributions", batch }
         }
-        await manager.save(ContributionEntity, assigned)
       }
+      // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.
+      await manager
+        .createQueryBuilder()
+        .update(ContributionEntity)
+        .set({ batch: null })
+        .where("batchId = :batchId", { batchId })
+        .execute()
       const result = await manager.delete(PublicationBatchEntity, batchId)
       return (result.affected ?? 0) > 0
         ? { deleted: true }

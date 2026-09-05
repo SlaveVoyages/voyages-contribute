@@ -130,3 +130,44 @@ test("search and date range combine", async () => {
   // "note" is in every row's comments; the range narrows it to one.
   expect(await ids({ search: "note", dateFrom: 2500 })).toEqual(["sc-alice-2"])
 })
+
+test("search combines with every sortable column without an alias error", async () => {
+  // Search forces the query-builder path; sorting by a relation column there
+  // used to throw an unknown-alias error. All three rows contain "note".
+  const columns = [
+    "author",
+    "timestamp",
+    "comments",
+    "status",
+    "id",
+    "voyage_id",
+    "decidedBy",
+    "batch"
+  ] as const
+  for (const sortBy of columns) {
+    for (const sortOrder of ["ASC", "DESC"] as const) {
+      const r = await service.listContributions({
+        search: "note",
+        sortBy,
+        sortOrder,
+        limit: 100
+      })
+      expect(r.data.length, `${sortBy} ${sortOrder}`).toBe(3)
+    }
+  }
+})
+
+test("search + sort by author orders by the author, in the query-builder path", async () => {
+  // Raw order (not the sorted `ids` helper): alice's two rows, then bob's.
+  const r = await service.listContributions({
+    search: "note",
+    sortBy: "author",
+    sortOrder: "ASC",
+    limit: 100
+  })
+  expect(r.data.map((c) => c.id)).toEqual([
+    "sc-alice-1",
+    "sc-alice-2",
+    "sc-bob-1"
+  ])
+})

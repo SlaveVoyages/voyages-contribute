@@ -26,13 +26,16 @@ export const approveBatchInChunks = async <C extends Contribution>(
     isEditor,
     identity,
     chunkSize = BULK_STATUS_LIMIT,
-    onChunkProcessed
+    onChunkProcessed,
+    filterEligible
   }: {
     ids: string[]
     isEditor: boolean
     identity: string | null
     chunkSize?: number
     onChunkProcessed?: (processedInChunk: number) => void
+   // Optional per-chunk revalidation.  Guards against membership/state moving under a long job.
+    filterEligible?: (chunkIds: string[]) => Promise<string[]>
   },
   deps: StatusChangeDeps<C>
 ): Promise<BulkStatusOutcome> => {
@@ -45,19 +48,23 @@ export const approveBatchInChunks = async <C extends Contribution>(
   const size = chunkSize > 0 ? chunkSize : BULK_STATUS_LIMIT
   for (let i = 0; i < ids.length; i += size) {
     const chunk = ids.slice(i, i + size)
-    const outcome = await changeManyStatuses(
-      {
-        ids: chunk,
-        to: ContributionStatus.Accepted,
-        commentSupplied: false,
-        isEditor,
-        identity
-      },
-      deps
-    )
-    aggregate.changed.push(...outcome.changed)
-    aggregate.unchanged.push(...outcome.unchanged)
-    aggregate.refused.push(...outcome.refused)
+    // Re-validate the chunk against the live state, if a check was given
+    const eligible = filterEligible ? await filterEligible(chunk) : chunk
+    if (eligible.length > 0) {
+      const outcome = await changeManyStatuses(
+        {
+          ids: eligible,
+          to: ContributionStatus.Accepted,
+          commentSupplied: false,
+          isEditor,
+          identity
+        },
+        deps
+      )
+      aggregate.changed.push(...outcome.changed)
+      aggregate.unchanged.push(...outcome.unchanged)
+      aggregate.refused.push(...outcome.refused)
+    }
     onChunkProcessed?.(chunk.length)
   }
   return aggregate

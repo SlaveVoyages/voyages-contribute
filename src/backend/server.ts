@@ -281,12 +281,18 @@ const SORTABLE_COLUMNS = [
 type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
 /**
- * Columns a reader who does not own the row is not allowed to see
+ * Columns a reader who does not own the row is not allowed to see. Ordering the
+ * shared, redacted table by one of these would let a non-editor read the hidden
+ * value off the ordering, so for them these fall back to `id`. `voyage_id` is
+ * not here: the voyage id is shown to everyone. `decidedBy` (reviewer identity)
+ * and `batch` (editor-only batch title) are, alongside author/timestamp/comments.
  */
 const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = [
   "author",
   "timestamp",
-  "comments"
+  "comments",
+  "decidedBy",
+  "batch"
 ]
 
 const getPaginationArgs = (
@@ -411,8 +417,16 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
         ? rawSearch.trim()
         : undefined
 
-    // Date range on the changeSet timestamp. ISO strings from the filter panel;
-    // parsed defensively so an unparseable value is ignored, not fatal.
+    // Whether the caller may act on the sensitive changeSet fields: an editor
+    // over every row, or a contributor over their own (author is set, and for a
+    // non-editor that can only be themselves). Sensitive sort, sensitive search,
+    // and the date range all key off this.
+    const canReadSensitive = isEditor || author !== undefined
+
+    // Date range on the changeSet timestamp -- a sensitive field. Applied only
+    // when the caller may read it; otherwise a contributor could narrow ranges
+    // against the shared listing to infer another author's hidden timestamp.
+    // ISO strings from the panel, parsed defensively so a bad value is ignored.
     const parseDate = (name: string): number | undefined => {
       const raw = req.query[name]
       if (typeof raw !== "string" || raw.length === 0) {
@@ -421,8 +435,8 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       const ms = Date.parse(raw)
       return Number.isFinite(ms) ? ms : undefined
     }
-    const dateFrom = parseDate("dateFrom")
-    const dateTo = parseDate("dateTo")
+    const dateFrom = canReadSensitive ? parseDate("dateFrom") : undefined
+    const dateTo = canReadSensitive ? parseDate("dateTo") : undefined
 
     // An editor reads every row, so may order by any column. A contributor may
     // order by a sensitive one only when the list is narrowed to their own work
@@ -431,7 +445,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     // table by author or comments is what falls back to `id`.
     const result = await dbService.listContributions({
       ...getPaginationArgs(req, {
-        allowSensitiveSort: isEditor || author !== undefined
+        allowSensitiveSort: canReadSensitive
       }),
       status,
       batchId,
@@ -1227,11 +1241,13 @@ app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
 // still reports the not-ready ones as refused rather than accepting them.
 app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res) => {
   try {
-    const batchId = parseInt(req.params.id)
-    if (isNaN(batchId)) {
+    // Parse the whole segment: parseInt would accept "1junk"/"1.5" and act on
+    // batch 1, starting a destructive job the path never named.
+    const batchId = Number(req.params.id)
+    if (!Number.isInteger(batchId) || batchId <= 0) {
       res.status(400).json({
         error: "Invalid batch ID",
-        details: "Batch ID must be a number"
+        details: "Batch ID must be a positive integer"
       })
       return
     }
@@ -1271,7 +1287,15 @@ app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res
             ids,
             isEditor,
             identity,
-            onChunkProcessed: (n) => advanceApproveProgress(job.jobId, n)
+            onChunkProcessed: (n) => advanceApproveProgress(job.jobId, n),
+            // Re-check each chunk against the live state right before deciding
+            // it: membership was snapshotted once, but over a minutes-long job
+            // the assign/delete/publish endpoints can move these ids out of the
+            // batch or publish it. This drops any that are no longer approvable
+            // in this still-unpublished batch, so the job cannot accept stale
+            // ids (changeOneStatus only checks status + readiness, not batch).
+            filterEligible: (chunk) =>
+              dbService.filterBatchApprovableIds(batchId, chunk)
           },
           statusChangeDeps
         )

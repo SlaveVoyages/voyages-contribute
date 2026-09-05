@@ -325,3 +325,30 @@ test("a listed batch carries its contribution count and per-status tally", async
   // The contributions themselves are not shipped with the listing.
   expect((listed as { contributions?: unknown }).contributions).toBeUndefined()
 })
+
+test("filterBatchApprovableIds keeps only ids still approvable in an unpublished batch", async () => {
+  const batch = await db.createPublicationBatch({ title: "reval", comments: "" })
+  await contribution("rv-wip", ContributionStatus.WorkInProgress)
+  await contribution("rv-sub", ContributionStatus.Submitted)
+  await contribution("rv-acc", ContributionStatus.Accepted)
+  await contribution("rv-out", ContributionStatus.Submitted)
+  // rv-out is deliberately left unassigned to this batch.
+  await db.assignContributionToBatch(["rv-wip", "rv-sub", "rv-acc"], batch.id)
+  const got = await db.filterBatchApprovableIds(batch.id, [
+    "rv-wip",
+    "rv-sub",
+    "rv-acc",
+    "rv-out",
+    "missing"
+  ])
+  // Accepted is not approvable; unassigned and unknown ids drop out.
+  expect(got.sort()).toEqual(["rv-sub", "rv-wip"])
+})
+
+test("filterBatchApprovableIds returns nothing once the batch is published", async () => {
+  const batch = await db.createPublicationBatch({ title: "reval-pub", comments: "" })
+  await contribution("rvp-1", ContributionStatus.Submitted)
+  await db.assignContributionToBatch("rvp-1", batch.id)
+  await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
+  expect(await db.filterBatchApprovableIds(batch.id, ["rvp-1"])).toEqual([])
+})
