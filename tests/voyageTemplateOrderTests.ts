@@ -6,7 +6,10 @@ import path from "path"
 import type { AddressInfo } from "net"
 import { voyageMapping } from "../src/tools/voyageMapping"
 import { voyageTemplateColumnOrder } from "../src/tools/voyageTemplateOrder"
-import { debugCheckHeaders } from "../src/tools/importer"
+import {
+  debugCheckHeaders,
+  RESERVED_IMPORT_COLUMNS
+} from "../src/tools/importer"
 import { createBulkImportRouter } from "../src/backend/bulkImport"
 
 /**
@@ -34,13 +37,24 @@ test("the template order names every column the mapping produces", () => {
   ).toEqual([])
 })
 
-test("the template order names nothing the mapping does not produce", () => {
+test("the template order names nothing but the mapping and reserved columns", () => {
   const headers = mappingHeaders()
-  const extra = voyageTemplateColumnOrder.filter((h) => !headers.has(h))
+  // Reserved import columns (e.g. `comments`) are ordered here on purpose even
+  // though the mapping does not produce them, so they are allowed extras.
+  const reserved = new Set(RESERVED_IMPORT_COLUMNS)
+  const extra = voyageTemplateColumnOrder.filter(
+    (h) => !headers.has(h) && !reserved.has(h)
+  )
   expect(
     extra,
     `these columns are ordered but no longer in the mapping: ${extra.join(", ")}`
   ).toEqual([])
+})
+
+test("the template order includes every reserved import column", () => {
+  for (const reserved of RESERVED_IMPORT_COLUMNS) {
+    expect(voyageTemplateColumnOrder).toContain(reserved)
+  }
 })
 
 test("the template order lists each column once", () => {
@@ -71,7 +85,7 @@ test("cargo sits where Daniel's list puts it, between the owners and fate", () =
   )
 })
 
-test("the endpoint the template is built from returns that order", async () => {
+const inspectApp = async () => {
   const uploadDir = await fs.mkdtemp(path.join(os.tmpdir(), "voyage-template-"))
   const app = express()
   app.use(
@@ -91,22 +105,50 @@ test("the endpoint the template is built from returns that order", async () => {
     })
   )
   const server = app.listen(0)
-  try {
-    const { port } = server.address() as AddressInfo
-    // What the frontend sends: a CSV with no columns at all, so that every
-    // column the mapping knows comes back as one the file is missing, and the
-    // answer is the whole template.
+  const { port } = server.address() as AddressInfo
+  const inspect = async (csv: string) => {
     const form = new FormData()
-    form.append("file", new Blob([""], { type: "text/csv" }), "empty.csv")
+    form.append("file", new Blob([csv], { type: "text/csv" }), "in.csv")
     const response = await fetch(
       `http://127.0.0.1:${port}/inspect-batched-contributions/Voyage`,
       { method: "POST", body: form }
     )
-    expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.mappingHeadersNotInCsv).toEqual(voyageTemplateColumnOrder)
-  } finally {
+    return { status: response.status, body: await response.json() }
+  }
+  const close = async () => {
     await new Promise((resolve) => server.close(resolve))
     await fs.rm(uploadDir, { recursive: true, force: true })
+  }
+  return { inspect, close }
+}
+
+test("the endpoint the template is built from returns that order", async () => {
+  const { inspect, close } = await inspectApp()
+  try {
+    // What the frontend sends: a CSV with no columns at all, so that every
+    // column the mapping knows comes back as one the file is missing, and the
+    // answer is the whole template -- which now ends with the reserved
+    // `comments` column.
+    const { status, body } = await inspect("")
+    expect(status).toBe(200)
+    expect(body.mappingHeadersNotInCsv).toEqual(voyageTemplateColumnOrder)
+    expect(body.mappingHeadersNotInCsv).toContain("comments")
+  } finally {
+    await close()
+  }
+})
+
+test("the reserved comments column is not reported as an unknown column", async () => {
+  const { inspect, close } = await inspectApp()
+  try {
+    // A real upload carrying a `comments` column must not trip the
+    // "unknown column" warning, and comments is expected so it is not
+    // re-listed as missing from the template either.
+    const { status, body } = await inspect("voyageid,comments\n1,hello\n")
+    expect(status).toBe(200)
+    expect(body.csvHeadersNotInMapping).not.toContain("comments")
+    expect(body.mappingHeadersNotInCsv).not.toContain("comments")
+  } finally {
+    await close()
   }
 })

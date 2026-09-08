@@ -21,6 +21,7 @@ import { createDirectLookup } from "../tools/lookup"
 import {
   debugCheckHeaders,
   LookupError,
+  RESERVED_IMPORT_COLUMNS,
   TrackedMappingErrors
 } from "../tools/importer"
 import {
@@ -176,6 +177,36 @@ export const applyContributionTemplate = (
     (_, key: keyof typeof ctx) => String(ctx[key])
   )
 
+/**
+ * Choose the Comments value for one imported contribution.
+ *
+ * A per-row `comments` cell wins and is used verbatim -- an editor's literal
+ * note reaches the field unchanged, with no {id}/{index} token expansion. Only
+ * when that cell is empty or absent do we fall back to the single
+ * `contributionComments` template applied to every row, and then to the default
+ * line when no template was supplied.
+ */
+export const resolveContributionComments = (
+  rowComment: string | undefined,
+  contributionComments: string | undefined,
+  templateCtx: {
+    entityName: string
+    filename: string
+    id: string | number
+    index: number
+  },
+  defaultComment: string
+): string => {
+  const trimmed = rowComment?.trim()
+  if (trimmed) {
+    return trimmed
+  }
+  if (contributionComments !== undefined) {
+    return applyContributionTemplate(contributionComments, templateCtx)
+  }
+  return defaultComment
+}
+
 export const parseUploadMetadata = (
   raw: unknown
 ): UploadMetadata | { error: string } => {
@@ -293,7 +324,7 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
     const buffer = await fs.readFile(filePath)
     const errors: TrackedMappingErrors[] = []
     const lookup = createDirectLookup(resolver)
-    const { updates, rowCount } = await importCSVFromBuffer(
+    const { updates, rowCount, rowComments } = await importCSVFromBuffer(
       buffer,
       schemaName,
       lookup,
@@ -392,10 +423,12 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
       const title = args.contributionTitle
         ? applyContributionTemplate(args.contributionTitle, templateCtx)
         : `Import of ${schemaName} #${update.entityRef.id}`
-      const comments =
-        args.contributionComments !== undefined
-          ? applyContributionTemplate(args.contributionComments, templateCtx)
-          : `Imported from CSV file ${filename} on ${new Date().toISOString()}`
+      const comments = resolveContributionComments(
+        rowComments[i],
+        args.contributionComments,
+        templateCtx,
+        `Imported from CSV file ${filename} on ${new Date().toISOString()}`
+      )
       const contribution: Partial<Contribution> = {
         id: `${schemaName}.${schemaName}.${update.entityRef.id}`,
         root: update.entityRef,
@@ -485,10 +518,18 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
         }
         const mappingEntry = AllMappings[entityName]
         const mappingHeaders = debugCheckHeaders(mappingEntry.mapping)
+        // Reserved columns (e.g. `comments`) are recognised by the import path
+        // without being part of the field mapping. Folding them into the
+        // expected-header set keeps them out of the "unknown column" warning on
+        // upload and puts them into the downloaded template like any other.
+        const expectedHeaders = new Set([
+          ...mappingHeaders,
+          ...RESERVED_IMPORT_COLUMNS
+        ])
         const csvHeaders = await getCSVHeaders(req.file.path)
         const csvSet = new Set(csvHeaders)
         const csvHeadersNotInMapping = csvHeaders.filter(
-          (h) => !mappingHeaders.has(h)
+          (h) => !expectedHeaders.has(h)
         )
         // The frontend builds the downloadable template out of this list --
         // it inspects an empty CSV so that every column comes back "missing" --
@@ -497,7 +538,7 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
         const orderIndex = new Map(
           (mappingEntry.templateColumnOrder ?? []).map((h, i) => [h, i])
         )
-        const mappingHeadersNotInCsv = [...mappingHeaders]
+        const mappingHeadersNotInCsv = [...expectedHeaders]
           .filter((h) => !csvSet.has(h))
           .sort(
             (a, b) =>

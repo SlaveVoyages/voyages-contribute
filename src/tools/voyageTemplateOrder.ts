@@ -18,8 +18,10 @@
  *    needs a position of its own. Whatever an editor writes there is
  *    discarded on import.
  *
- * This list must name exactly the headers the mapping produces, no more and no
- * fewer. `voyageTemplateOrderTests.ts` fails the build if the two drift apart,
+ * This list must name exactly the headers the mapping produces, plus the
+ * reserved import columns (see RESERVED_IMPORT_COLUMNS) that the import path
+ * recognises without them being part of the mapping -- `comments` sits at the
+ * end. `voyageTemplateOrderTests.ts` fails the build if the two drift apart,
  * so a column added to the mapping has to be given a home here as well.
  */
 export const voyageTemplateColumnOrder: string[] = [
@@ -335,5 +337,9 @@ export const voyageTemplateColumnOrder: string[] = [
   "malrat7",
   "tslmtimp",
   "vymrtimp",
-  "vymrtrat"
+  "vymrtrat",
+  // Reserved import column: populates each contribution's Comments field per
+  // row. Not part of the Voyage field mapping; recognised only by the import
+  // path. Kept last so it never disturbs the dataset column sequence above.
+  "comments"
 ]

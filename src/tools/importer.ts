@@ -593,13 +593,28 @@ export interface TrackedMappingErrors {
   rowNumbers: (number | string)[]
 }
 
+/**
+ * CSV headers the bulk-import path recognises without them being part of any
+ * entity's field mapping. `comments` sets each contribution's Comments field
+ * per row (see runImport in bulkImport.ts). Lowercase, because PapaParse
+ * lowercases headers before the importer ever sees a row.
+ */
+export const RESERVED_COMMENT_COLUMN = "comments"
+export const RESERVED_IMPORT_COLUMNS: readonly string[] = [
+  RESERVED_COMMENT_COLUMN
+]
+
 export const MapDataSourceToChangeSets = async (
   rows: Record<string, string>[],
   mapping: DataMapping,
   schema: EntitySchema,
   lookup: EntityLookUp,
   errors: TrackedMappingErrors[],
-  maxRows?: number
+  maxRows?: number,
+  // Optional, filled aligned with the returned updates: rowComments[i] is the
+  // reserved `comments` cell of the row that produced updates[i]. Skipped rows
+  // (no changes produced) never push here, so alignment holds despite them.
+  rowComments?: string[]
 ): Promise<EntityUpdate[]> => {
   const changes: EntityUpdate[] = []
   const pkProp = schema.properties.find(
@@ -637,6 +652,9 @@ export const MapDataSourceToChangeSets = async (
           },
           changes: propChanges
         })
+        // Captured here, in the same branch that pushes the update, so a skipped
+        // row can never shift the comment onto the wrong contribution.
+        rowComments?.push(row[RESERVED_COMMENT_COLUMN] ?? "")
       }
     } catch (error) {
       console.error(
