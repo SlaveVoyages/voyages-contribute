@@ -1460,6 +1460,35 @@ export const EnslaverInRelationSchema = mkBuilder({
   })
   .build()
 
+/**
+ * A name contributed for an enslaved person, with the language it is recorded
+ * in. Enslaved people carry more than one name (documented, modern), so these
+ * hang off the Enslaved entity as an owned list -- the same shape Enslaver uses
+ * for its aliases.
+ *
+ * NOTE: `backingTable` and the field names are provisional until the production
+ * data model for enslaved names/languages is confirmed; they only need to be
+ * correct for publication, not for capturing the contribution (which stores the
+ * change tree as JSON).
+ */
+export const EnslavedNameSchema = mkBuilder({
+  name: "EnslavedName",
+  backingTable: "past_enslavedname",
+  contributionMode: "Owned",
+  pkField: "id",
+  getLabel: (d, short) => (short ? d.Name : `Name ${d.Name}`)
+})
+  .addOwnerProp("enslaved_id")
+  .addText({
+    label: "Name",
+    backingField: "name"
+  })
+  .addText({
+    label: "Language",
+    backingField: "language"
+  })
+  .build()
+
 export const EnslavedSchema = mkBuilder({
   name: "Enslaved",
   backingTable: "past_enslaved",
@@ -1479,6 +1508,14 @@ export const EnslavedSchema = mkBuilder({
   .addNumber({
     label: "Gender",
     backingField: "gender_int"
+  })
+  // Additive: existing Enslaved contributions have no names list and are
+  // unaffected. Mirrors Enslaver's "Aliases" owned list.
+  .addOwnedEntityList({
+    childBackingProp: "enslaved_id",
+    editModes: ListEditMode.All,
+    label: "Names",
+    linkedEntitySchema: EnslavedNameSchema
   })
   .build()
 
