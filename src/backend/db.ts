@@ -24,6 +24,7 @@ import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
 import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
+import { extractShipName } from "./shipName"
 import {
   BatchWithCounts,
   ChangeSet,
@@ -173,6 +174,13 @@ export class ContributionEntity implements Contribution {
 
   @Column({ type: "int" })
   status!: ContributionStatus
+
+  // Denormalised from the changeSet on write (see createContribution) so the
+  // list can order by ship name -- it has no column of its own in the change
+  // tree, and a JSON path there is neither fixed nor cheap to sort on. Null for
+  // contributions not about a voyage, or edits that never touched the ship.
+  @Column({ type: "varchar", nullable: true })
+  shipName?: string | null
 
   @OneToMany(() => ReviewEntity, (review) => review.contribution, {
     cascade: true
@@ -339,6 +347,9 @@ const applyOrderToQueryBuilder = (
     case "decidedBy":
       qb.orderBy("contribution.decidedBy", sortOrder)
       break
+    case "shipName":
+      qb.orderBy("contribution.shipName", sortOrder)
+      break
     default:
       qb.orderBy("contribution.id", sortOrder)
   }
@@ -390,7 +401,10 @@ export class DatabaseService {
   ): Promise<ContributionEntity> {
     const contribution = this.contributionRepo.create({
       ...data,
-      id: data.id || uuidv4()
+      id: data.id || uuidv4(),
+      // Recomputed on every save so it tracks the ship as the changeSet is
+      // edited; null when the change tree names no ship.
+      shipName: extractShipName(data.changeSet)
     } as ContributionEntity)
     return this.contributionRepo.save(contribution)
   }
@@ -462,6 +476,7 @@ export class DatabaseService {
         | "decidedBy"
         | "batch"
         | "voyage_id"
+        | "shipName"
       sortOrder?: "ASC" | "DESC"
       /**
        * Free-text search. Case-insensitive OR match across the contribution id,
@@ -705,6 +720,8 @@ export class DatabaseService {
       order.changeSet = { comments: sortOrder }
     } else if (sortBy === "status") {
       order.status = sortOrder
+    } else if (sortBy === "shipName") {
+      order.shipName = sortOrder
     } else if (sortBy === "decidedBy") {
       order.decidedBy = sortOrder
     } else if (sortBy === "batch") {

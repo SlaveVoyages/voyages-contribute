@@ -274,9 +274,13 @@ const SORTABLE_COLUMNS = [
   "decidedBy",
   "batch",
   // Materialized from `root` via a JSON path -- best-effort, see
-  // listContributions. Ship and Nationality are not offered: they are not
-  // stored on the contribution at all.
-  "voyage_id"
+  // listContributions. Nationality is still not offered: it is not stored on
+  // the contribution at all.
+  "voyage_id",
+  // Denormalised into a column on write (contributions.shipName), so unlike
+  // nationality it can be ordered. It is redacted changeSet content, so it is
+  // sensitive below.
+  "shipName"
 ] as const
 type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
@@ -292,7 +296,10 @@ const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = [
   "timestamp",
   "comments",
   "decidedBy",
-  "batch"
+  "batch",
+  // The ship name comes from the redacted changeSet, so ordering the shared
+  // list by it would leak it the same way author/comments would.
+  "shipName"
 ]
 
 const getPaginationArgs = (
