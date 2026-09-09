@@ -28,7 +28,16 @@ const rows = [
     title: "Nossa Senhora da Guia",
     comments: "cherry note",
     voyageId: 700001,
-    timestamp: 1000
+    timestamp: 1000,
+    // The ship name is not a column -- it lives in the changeSet body, which
+    // the search reaches via `cs.changes LIKE`. Only alice's row carries one.
+    changes: [
+      {
+        kind: "direct",
+        property: "VoyageShip_ship_name",
+        changed: "Bellone"
+      }
+    ]
   },
   {
     id: "sc-bob-1",
@@ -51,13 +60,21 @@ const rows = [
 await AppDataSource.initialize()
 await AppDataSource.runMigrations({ transaction: "all" })
 
-for (const { id, author, title, comments, voyageId, timestamp } of rows) {
+for (const {
+  id,
+  author,
+  title,
+  comments,
+  voyageId,
+  timestamp,
+  changes
+} of rows) {
   const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
     author,
     title,
     comments,
     timestamp,
-    changes: []
+    changes: changes ?? []
   })
   await AppDataSource.manager.save(ContributionEntity, {
     id,
@@ -114,6 +131,35 @@ test("an anonymous contributor matches only public fields", async () => {
   const anon = { searchSensitiveScope: { ownIdentity: null } }
   expect(await ids({ search: "cherry", ...anon })).toEqual([])
   expect(await ids({ search: "700001", ...anon })).toEqual(["sc-alice-1"])
+})
+
+// ── Search: the changeSet body (ship name) ──────────────────────────────────
+
+test("search matches a ship name inside the changeSet for an editor", async () => {
+  expect(await ids({ search: "Bellone" })).toEqual(["sc-alice-1"])
+  // Case-insensitive, like the other fields.
+  expect(await ids({ search: "bellone" })).toEqual(["sc-alice-1"])
+})
+
+test("a ship name is redacted content: only the owner (or an editor) finds it", async () => {
+  // Bob cannot search into alice's changeSet body.
+  expect(
+    await ids({
+      search: "Bellone",
+      searchSensitiveScope: { ownIdentity: "bob@x.com" }
+    })
+  ).toEqual([])
+  // Alice can, on her own row.
+  expect(
+    await ids({
+      search: "Bellone",
+      searchSensitiveScope: { ownIdentity: "alice@x.com" }
+    })
+  ).toEqual(["sc-alice-1"])
+  // Anonymous matches only public fields, never the body.
+  expect(
+    await ids({ search: "Bellone", searchSensitiveScope: { ownIdentity: null } })
+  ).toEqual([])
 })
 
 // ── Date range ──────────────────────────────────────────────────────────────

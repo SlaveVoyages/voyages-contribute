@@ -643,15 +643,25 @@ export class DatabaseService {
               `json_extract(contribution.root, '$.id') LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
               { searchTerm: term }
             )
-            // Sensitive fields (author / title / comments) live on the
-            // changeSet. Matched via a subquery keyed by the FK so this does not
-            // depend on the join alias. For an editor, across every row; for a
-            // contributor, only their own rows -- named by identity -- so a
-            // search cannot probe the redacted content of other people's work.
+            // Sensitive fields (author / title / comments) plus the changeSet
+            // body live on the changeSet. Matched via a subquery keyed by the
+            // FK so this does not depend on the join alias. For an editor,
+            // across every row; for a contributor, only their own rows -- named
+            // by identity -- so a search cannot probe the redacted content of
+            // other people's work.
+            //
+            // `cs.changes` is the whole edit as one simple-json (text) column.
+            // A LIKE over it is how the ship name -- and any other value buried
+            // in the change tree, which has no column of its own -- becomes
+            // searchable. It is deliberately broad: a term can match a value
+            // anywhere in the tree, not only the ship, and matches the raw JSON
+            // (so it also sees the property keys). That is the trade for
+            // searching a field the schema does not surface as a column.
             const sensitive =
               `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
               ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
-              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
+              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+              ` OR cs.changes LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
             if (searchSensitiveScope === "all") {
               b.orWhere(
                 `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
