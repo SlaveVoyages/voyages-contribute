@@ -423,7 +423,7 @@ export const VoyageItinerarySchema = mkBuilder({
   .build()
 
 const SectionShipNations = "Ship and nation"
-const SectionCharacteristics = "Enslaved (characteristics)"
+const SectionCharacteristics = "Age and sex"
 
 const slaveNumberPrefixes = [
   "num_men",
@@ -487,170 +487,170 @@ export const VoyageSlaveNumbersSchema = mkBuilder({
   .addNumber({
     label: "Captives intended from first port of embarkation",
     backingField: "num_slaves_intended_first_port",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Captives intended from second port of embarkation",
     backingField: "num_slaves_intended_second_port",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Captives carried from first port of embarkation",
     backingField: "num_slaves_carried_first_port",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Captives carried from second port of embarkation",
     backingField: "num_slaves_carried_second_port",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Captives carried from third port of embarkation",
     backingField: "num_slaves_carried_third_port",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Total captives embarked",
     backingField: "total_num_slaves_purchased",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
     label: "Total captives on board at departure from last slaving port",
     backingField: "total_num_slaves_dep_last_slaving_port",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
     label: "Total captives arrived at first port of disembarkation",
     backingField: "total_num_slaves_arr_first_port_embark",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
     label: "Captives landed at first port of disembarkation",
     backingField: "num_slaves_disembark_first_place",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Captives landed at second port of disembarkation",
     backingField: "num_slaves_disembark_second_place",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Captives landed at third port of disembarkation",
     backingField: "num_slaves_disembark_third_place",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Deaths before leaving broad region of embarkation",
     backingField: "slave_deaths_before_africa",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Deaths in the transoceanic voyage",
     backingField: "slave_deaths_between_africa_america",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.BeginnerContributor
   })
   .addNumber({
     label: "Deaths between arrival and sale",
     backingField: "slave_deaths_between_arrival_and_sale",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.AdvancedContributor
   })
   .addNumber({
     label: "Total captives embarked (imputed)",
     backingField: "imp_total_num_slaves_embarked",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives disembarked (imputed)",
     backingField: "imp_total_num_slaves_disembarked",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Sterling cash price in Jamaica (imputed)",
     backingField: "imp_jamaican_cash_price",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Imputed number of captive deaths during Middle Passage",
     backingField: "imp_mortality_during_voyage",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives embarked with age identified",
     backingField: "total_slaves_embarked_age_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives embarked with gender identified",
     backingField: "total_slaves_embarked_gender_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives landed with age identified",
     backingField: "total_slaves_landed_age_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives landed with gender identified",
     backingField: "total_slaves_landed_gender_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives identified by age at departure or arrival",
     backingField: "total_slaves_dept_or_arr_age_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives identified by gender at departure or arrival",
     backingField: "total_slaves_dept_or_arr_gender_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Imputed number of captives embarked for mortality calculation",
     backingField: "imp_slaves_embarked_for_mortality",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives embarked with age and gender identified",
     backingField: "total_slaves_embarked_age_gender_identified",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label: "Total captives identified by age and gender among landed",
     backingField: "total_slaves_by_age_gender_identified_among_landed",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
     label:
       "Total captives identified by age and gender at departure or arrival",
     backingField: "total_slaves_by_age_gender_identified_departure_or_arrival",
-    section: "Numbers",
+    section: "Totals",
     accessLevel: PropertyAccessLevel.Editor
   })
   .addNumber({
