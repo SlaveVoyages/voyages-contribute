@@ -898,6 +898,70 @@ app.patch("/contributions/bulk-status", authenticateJWT, async (req, res) => {
   }
 })
 
+// Bulk-delete contributions from the editorial table. Editor-only
+app.post(
+  "/contributions/bulk-delete",
+  authenticateJWT,
+  requireEditor,
+  async (req, res) => {
+    try {
+      const plan = planBulkStatus(req.body?.contributionIds)
+      if (plan.kind === "refused") {
+        res.status(plan.status).json(plan.body)
+        return
+      }
+      const changed: string[] = []
+      const refused: {
+        id: string
+        status: number
+        error: string
+        details?: string
+      }[] = []
+      for (const id of plan.ids) {
+        try {
+          const existing = await dbService.getContribution(id)
+          if (!existing) {
+            refused.push({ id, status: 404, error: "Contribution not found" })
+            continue
+          }
+          if (existing.status === ContributionStatus.Published) {
+            refused.push({
+              id,
+              status: 400,
+              error: "Published contributions cannot be deleted"
+            })
+            continue
+          }
+          const ok = await dbService.deleteContribution(id)
+          if (ok) {
+            changed.push(id)
+          } else {
+            refused.push({
+              id,
+              status: 500,
+              error: "Failed to delete contribution"
+            })
+          }
+        } catch (err) {
+          refused.push({
+            id,
+            status: 500,
+            error: "Failed to delete contribution",
+            details: (err as Error).message
+          })
+        }
+      }
+      res.json({ requested: plan.ids.length, changed, unchanged: [], refused })
+    } catch (error) {
+      console.error("Error bulk-deleting contributions:", error)
+      res.status(500).json({
+        error: "Failed to delete contributions",
+        details: (error as Error).message
+      })
+    }
+  }
+)
+
 // Add review to contribution
 // Reviewing is an editorial act, so the role is what stands in front of it.
 // That is also what makes the author below safe to take from the request: a
