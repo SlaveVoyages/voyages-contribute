@@ -539,18 +539,31 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
         .json({ error: "Cannot determine author from token or request" })
       return
     }
+    // The contributor's own contributions. Historically this was WorkInProgress
+    // only; it now returns every status so submitted (and decided) work shows on
+    // the Contribute home too. An optional ?status filter narrows it (single
+    // value or repeated for several), matching the editor /contributions route.
+    let status: ContributionStatus | ContributionStatus[] | undefined =
+      undefined
+    if (req.query.status !== undefined) {
+      status = Array.isArray(req.query.status)
+        ? (req.query.status as string[]).map(
+            (s) => parseInt(s) as ContributionStatus
+          )
+        : (parseInt(req.query.status as string) as ContributionStatus)
+    }
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author,
-      status: ContributionStatus.WorkInProgress
+      status
     })
     res.json(contributions)
   } catch (error) {
     console.error(
-      `Error fetching WIP contributions for author ${getAuthorFromRequest(req)}:`,
+      `Error fetching contributions for author ${getAuthorFromRequest(req)}:`,
       error
     )
-    res.status(500).json({ error: "Failed to fetch WIP contributions" })
+    res.status(500).json({ error: "Failed to fetch contributions" })
   }
 })
 
