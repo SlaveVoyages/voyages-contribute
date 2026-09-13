@@ -24,6 +24,7 @@ import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
 import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
+import { extractNationality } from "./nationality"
 import { extractShipName } from "./shipName"
 import {
   BatchWithCounts,
@@ -181,6 +182,12 @@ export class ContributionEntity implements Contribution {
   // contributions not about a voyage, or edits that never touched the ship.
   @Column({ type: "varchar", nullable: true })
   shipName?: string | null
+
+  // Denormalised ship nationality, same rationale as shipName: read from the
+  // changeSet on write so the list can order by it. Null for contributions not
+  // about a voyage, or edits that never touched the ship's nationality.
+  @Column({ type: "varchar", nullable: true })
+  nationality?: string | null
 
   @OneToMany(() => ReviewEntity, (review) => review.contribution, {
     cascade: true
@@ -350,6 +357,9 @@ const applyOrderToQueryBuilder = (
     case "shipName":
       qb.orderBy("contribution.shipName", sortOrder)
       break
+    case "nationality":
+      qb.orderBy("contribution.nationality", sortOrder)
+      break
     default:
       qb.orderBy("contribution.id", sortOrder)
   }
@@ -404,7 +414,8 @@ export class DatabaseService {
       id: data.id || uuidv4(),
       // Recomputed on every save so it tracks the ship as the changeSet is
       // edited; null when the change tree names no ship.
-      shipName: extractShipName(data.changeSet)
+      shipName: extractShipName(data.changeSet),
+      nationality: extractNationality(data.changeSet)
     } as ContributionEntity)
     return this.contributionRepo.save(contribution)
   }
@@ -477,6 +488,7 @@ export class DatabaseService {
         | "batch"
         | "voyage_id"
         | "shipName"
+        | "nationality"
       sortOrder?: "ASC" | "DESC"
       /**
        * Free-text search. Case-insensitive OR match across the contribution id,
@@ -722,6 +734,8 @@ export class DatabaseService {
       order.status = sortOrder
     } else if (sortBy === "shipName") {
       order.shipName = sortOrder
+    } else if (sortBy === "nationality") {
+      order.nationality = sortOrder
     } else if (sortBy === "decidedBy") {
       order.decidedBy = sortOrder
     } else if (sortBy === "batch") {
