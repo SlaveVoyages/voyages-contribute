@@ -1266,10 +1266,12 @@ app.patch("/edit_batch", authenticateJWT, requireEditor, async (req, res) => {
 })
 
 app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
-  // A pending batch's contributions are unassigned and the batch deleted -- the
-  // behaviour the delete-batch modal already promises. A published batch that
-  // still holds contributions stays blocked: unassigning them would corrupt the
-  // record of what it published.
+  // Two modes, chosen by the editor in the remove-batch dialog:
+  //  - default: unassign the batch's contributions and delete the batch (they
+  //    survive, back in the pool).
+  //  - ?deleteContributions=true: delete the contributions as well, then the
+  //    batch (destructive).
+  // A published batch that still holds contributions stays blocked either way.
   try {
     const batchId = parseInt(req.params.id)
     if (isNaN(batchId)) {
@@ -1279,7 +1281,8 @@ app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
       })
       return
     }
-    const result = await dbService.deleteBatch(batchId)
+    const deleteContributions = req.query.deleteContributions === "true"
+    const result = await dbService.deleteBatch(batchId, deleteContributions)
     if (result.deleted) {
       res.status(204).send()
       return

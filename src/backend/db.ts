@@ -1209,20 +1209,27 @@ export class DatabaseService {
     return rows.map((r) => r.id)
   }
 
-  // Delete a publication batch by id.
+  // Delete a publication batch by id, in one of two modes:
   //
-  // Honours what the delete-batch modal promises the editor: a pending batch's
-  // contributions are unassigned (batch -> null) and then the empty batch is
-  // deleted, all in one transaction so a contribution is never left pointing at
-  // a batch that is gone.
+  //  - `deleteContributions = false` (default): unassign the batch's
+  //    contributions (batch -> null) and delete the empty batch. The
+  //    contributions survive, back in the pool. This is what the delete-batch
+  //    modal has always promised.
+  //  - `deleteContributions = true`: delete the batch's contributions as well,
+  //    then the batch. Destructive -- the contributions are gone.
+  //
+  // Both run in one transaction so a contribution is never left pointing at a
+  // batch that is gone.
   //
   // The one case that stays blocked is a *published* batch that still holds
   // contributions: a published batch is the record of what it published (it
-  // carries a `published` date and `publishedBy`), and unassigning its
-  // contributions would corrupt that record. Mirrors the guard in
-  // assignContributionToBatch, which forbids moving work out of a published
-  // batch for the same reason.
-  async deleteBatch(batchId: number): Promise<DeleteBatchResult> {
+  // carries a `published` date and `publishedBy`), and removing its
+  // contributions -- by unassign or delete -- would corrupt that record.
+  // Mirrors the guard in assignContributionToBatch.
+  async deleteBatch(
+    batchId: number,
+    deleteContributions = false
+  ): Promise<DeleteBatchResult> {
     return await AppDataSource.transaction(async (manager) => {
       const batch = await manager.findOne(PublicationBatchEntity, {
         where: { id: batchId }
@@ -1240,13 +1247,40 @@ export class DatabaseService {
           return { deleted: false, reason: "published_with_contributions", batch }
         }
       }
-      // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.
-      await manager
-        .createQueryBuilder()
-        .update(ContributionEntity)
-        .set({ batch: null })
-        .where("batchId = :batchId", { batchId })
-        .execute()
+      if (deleteContributions) {
+        // Delete the batch's contributions. reviews and media reference the
+        // contribution with no ON DELETE CASCADE, so remove those first. All
+        // set-based (subquery on batchId) so a 7,000-voyage batch is a handful
+        // of statements, not thousands.
+        const inBatch =
+          "contributionId IN (SELECT id FROM contributions WHERE batchId = :batchId)"
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(ContributionMediaEntity)
+          .where(inBatch, { batchId })
+          .execute()
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(ReviewEntity)
+          .where(inBatch, { batchId })
+          .execute()
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(ContributionEntity)
+          .where("batchId = :batchId", { batchId })
+          .execute()
+      } else {
+        // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.
+        await manager
+          .createQueryBuilder()
+          .update(ContributionEntity)
+          .set({ batch: null })
+          .where("batchId = :batchId", { batchId })
+          .execute()
+      }
       const result = await manager.delete(PublicationBatchEntity, batchId)
       return (result.affected ?? 0) > 0
         ? { deleted: true }
