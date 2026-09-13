@@ -1461,31 +1461,21 @@ export const EnslaverInRelationSchema = mkBuilder({
   .build()
 
 /**
- * A name contributed for an enslaved person, with the language it is recorded
- * in. Enslaved people carry more than one name (documented, modern), so these
- * hang off the Enslaved entity as an owned list -- the same shape Enslaver uses
- * for its aliases.
- *
- * NOTE: `backingTable` and the field names are provisional until the production
- * data model for enslaved names/languages is confirmed; they only need to be
- * correct for publication, not for capturing the contribution (which stores the
- * change tree as JSON).
+ * Read-only language-group vocabulary, so an Enslaved contribution can pick the
+ * person's language group. Reference (per Domingos: the codebase is authority)
+ * is voyages-api `past.models`: `Enslaved.language_group` is a FK to
+ * `LanguageGroup`, which extends NamedModelAbstractBase -- so it is just a name.
  */
-export const EnslavedNameSchema = mkBuilder({
-  name: "EnslavedName",
-  backingTable: "past_enslavedname",
-  contributionMode: "Owned",
+export const LanguageGroupSchema = mkBuilder({
+  name: "LanguageGroup",
+  backingTable: "past_languagegroup",
   pkField: "id",
-  getLabel: (d, short) => (short ? d.Name : `Name ${d.Name}`)
+  contributionMode: "ReadOnly",
+  getLabel: (data) => coalesce(data["Language group"])
 })
-  .addOwnerProp("enslaved_id")
   .addText({
-    label: "Name",
+    label: "Language group",
     backingField: "name"
-  })
-  .addText({
-    label: "Language",
-    backingField: "language"
   })
   .build()
 
@@ -1501,6 +1491,26 @@ export const EnslavedSchema = mkBuilder({
     label: "Documented name",
     backingField: "documented_name"
   })
+  // Additional documented names and the modern name -- all real columns on
+  // past_enslaved (voyages-api past.models Enslaved), so they sit directly on
+  // the Enslaved root rather than a child table (EnslavedName has no FK to
+  // Enslaved). Additive: existing contributions simply leave them blank.
+  .addText({
+    label: "First name",
+    backingField: "name_first"
+  })
+  .addText({
+    label: "Second name",
+    backingField: "name_second"
+  })
+  .addText({
+    label: "Third name",
+    backingField: "name_third"
+  })
+  .addText({
+    label: "Modern name",
+    backingField: "modern_name"
+  })
   .addNumber({
     label: "Age",
     backingField: "age"
@@ -1509,13 +1519,12 @@ export const EnslavedSchema = mkBuilder({
     label: "Gender",
     backingField: "gender_int"
   })
-  // Additive: existing Enslaved contributions have no names list and are
-  // unaffected. Mirrors Enslaver's "Aliases" owned list.
-  .addOwnedEntityList({
-    childBackingProp: "enslaved_id",
-    editModes: ListEditMode.All,
-    label: "Names",
-    linkedEntitySchema: EnslavedNameSchema
+  // Enslaved.language_group FK -> LanguageGroup.
+  .addLinkedEntity({
+    label: "Language group",
+    backingField: "language_group_id",
+    linkedEntitySchema: LanguageGroupSchema,
+    mode: EntityLinkEditMode.Select
   })
   .build()
 
