@@ -1114,8 +1114,28 @@ export class DatabaseService {
   }
 
   async deleteContribution(id: string): Promise<boolean> {
-    const result = await this.contributionRepo.delete(id)
-    return result.affected ? result.affected > 0 : false
+    // reviews and media reference the contribution with no ON DELETE CASCADE, so
+    // a plain delete fails a foreign-key constraint once the contribution has
+    // either. Rejected and accepted contributions carry reviews, so removing the
+    // children first (in one transaction) is what lets those be deleted, not
+    // just clean WorkInProgress drafts.
+    return AppDataSource.transaction(async (manager) => {
+      const contribution = await manager.findOne(ContributionEntity, {
+        where: { id },
+        relations: ["reviews", "media"]
+      })
+      if (!contribution) {
+        return false
+      }
+      if (contribution.media?.length) {
+        await manager.remove(contribution.media)
+      }
+      if (contribution.reviews?.length) {
+        await manager.remove(contribution.reviews)
+      }
+      const result = await manager.delete(ContributionEntity, id)
+      return result.affected ? result.affected > 0 : false
+    })
   }
 
   // Check whether a batch has any contributions assigned.
