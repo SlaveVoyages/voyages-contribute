@@ -26,10 +26,15 @@ export const extractShipName = (
   if (!ship) {
     return null
   }
-  const direct = ship.changes?.find(
+  const directChange = ship.changes?.find(
     (s: any) => s?.kind === "direct" && s?.property === "VoyageShip_ship_name"
-  )?.changed
-  const name = direct ?? ship.ownedEntity?.data?.["Name of vessel"]
+  )
+  // A direct change to the name wins even when it clears it (changed: null);
+  // only an edit that never touches the name leaves the current vessel name to
+  // stand. `changed ?? owned` would resurrect a name the contribution removed.
+  const name = directChange
+    ? directChange.changed
+    : ship.ownedEntity?.data?.["Name of vessel"]
   const trimmed = name == null ? "" : String(name).trim()
   return trimmed === "" ? null : trimmed
 }

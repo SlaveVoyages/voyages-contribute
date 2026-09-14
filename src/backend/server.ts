@@ -111,6 +111,22 @@ const ensureUploadDir = async () => {
   }
 }
 
+// Unlink uploaded files whose media rows were just deleted. Deleting a
+// contribution or a batch removes only the media metadata; the files under
+// uploadDir would otherwise be orphaned on disk with no row left to find them
+// by. Called after the delete commits, and never lets a missing file fail the
+// request -- mirrors the single /media/:mediaId deletion path.
+const unlinkMediaFiles = async (files: string[]): Promise<void> => {
+  for (const file of files) {
+    const filePath = path.join(uploadDir, file)
+    try {
+      await fs.unlink(filePath)
+    } catch (error) {
+      console.warn(`Failed to delete file ${filePath}:`, error)
+    }
+  }
+}
+
 // Configure multer storage
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
@@ -667,11 +683,14 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
       })
       return
     }
-    const success = await dbService.deleteContribution(req.params.id)
-    if (!success) {
+    const { deleted, mediaFiles } = await dbService.deleteContribution(
+      req.params.id
+    )
+    if (!deleted) {
       res.status(500).json({ error: "Failed to delete contribution" })
       return
     }
+    await unlinkMediaFiles(mediaFiles)
     res.status(204).end()
   } catch (error) {
     console.error("Error deleting WIP contributions:", error)
@@ -919,12 +938,13 @@ app.post(
   requireEditor,
   async (req, res) => {
     try {
-      const plan = planBulkStatus(req.body?.contributionIds)
+      const plan = planBulkStatus(req.body?.contributionIds, "delete")
       if (plan.kind === "refused") {
         res.status(plan.status).json(plan.body)
         return
       }
       const changed: string[] = []
+      const mediaFiles: string[] = []
       const refused: {
         id: string
         status: number
@@ -946,9 +966,10 @@ app.post(
             })
             continue
           }
-          const ok = await dbService.deleteContribution(id)
-          if (ok) {
+          const result = await dbService.deleteContribution(id)
+          if (result.deleted) {
             changed.push(id)
+            mediaFiles.push(...result.mediaFiles)
           } else {
             refused.push({
               id,
@@ -965,6 +986,8 @@ app.post(
           })
         }
       }
+      // Unlink the deleted contributions' upload files once, after the loop.
+      await unlinkMediaFiles(mediaFiles)
       res.json({ requested: plan.ids.length, changed, unchanged: [], refused })
     } catch (error) {
       console.error("Error bulk-deleting contributions:", error)
@@ -1297,6 +1320,7 @@ app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
     const deleteContributions = req.query.deleteContributions === "true"
     const result = await dbService.deleteBatch(batchId, deleteContributions)
     if (result.deleted) {
+      await unlinkMediaFiles(result.mediaFiles)
       res.status(204).send()
       return
     }

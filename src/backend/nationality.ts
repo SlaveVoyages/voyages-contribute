@@ -11,10 +11,11 @@ import type { ChangeSet } from "../models/contribution"
  * can be denormalised into a `contributions.nationality` column the list can
  * order by; a JSON path has no fixed shape to sort on.
  *
- * Matches the frontend's `extractLinkedShipData(..., 'VoyageShip_nationality_ship_id',
- * 'Nation name')` so the sorted value is the one the grid shows. Contributions
- * not rooted on a voyage, or edits that never touched the ship's nationality,
- * simply have none.
+ * Reads the contributed nationality, and -- like extractShipName -- falls back
+ * to the ship's current nationality ("National carrier") when the edit does not
+ * touch it, so a contribution that changed some other field still sorts by the
+ * nationality it carries. Contributions not rooted on a voyage, or edits that
+ * never touched the ship's nationality, simply have none.
  */
 export const extractNationality = (
   changeSet: ChangeSet | undefined | null
@@ -27,9 +28,14 @@ export const extractNationality = (
   if (!ship) {
     return null
   }
-  const name = ship.changes?.find(
+  const linked = ship.changes?.find(
     (s: any) => s?.property === "VoyageShip_nationality_ship_id"
-  )?.changed?.data?.["Nation name"]
+  )
+  // A contributed nationality wins even when it clears it (changed: null); only
+  // an edit that never touches nationality leaves the current one to stand.
+  const name = linked
+    ? linked.changed?.data?.["Nation name"]
+    : ship.ownedEntity?.data?.["National carrier"]?.data?.["Nation name"]
   const trimmed = name == null ? "" : String(name).trim()
   return trimmed === "" ? null : trimmed
 }
