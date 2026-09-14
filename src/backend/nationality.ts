@@ -12,7 +12,8 @@ import type { ChangeSet } from "../models/contribution"
  * order by; a JSON path has no fixed shape to sort on.
  *
  * Matches the frontend's `extractLinkedShipData(..., 'VoyageShip_nationality_ship_id',
- * 'Nation name')` so the sorted value is the one the grid shows. Contributions
+ * 'Nation name')` -- the contributed value only, no fallback to the current
+ * nationality -- so the sorted value is the one the grid shows. Contributions
  * not rooted on a voyage, or edits that never touched the ship's nationality,
  * simply have none.
  */

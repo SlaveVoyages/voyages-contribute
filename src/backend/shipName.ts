@@ -6,14 +6,15 @@ import type { ChangeSet } from "../models/contribution"
  *
  * The ship name is not a column on the contribution -- it lives inside the
  * changeSet, under the root's `Voyage_Ship` section as the
- * `VoyageShip_ship_name` direct change (falling back to the owned entity's
- * "Name of vessel"). It is read out here so it can be denormalised into a
- * `contributions.shipName` column that the list can order by; a JSON path has
- * no fixed shape to sort on, and doing it per-row at query time is slow.
+ * `VoyageShip_ship_name` direct change. It is read out here so it can be
+ * denormalised into a `contributions.shipName` column that the list can order
+ * by; a JSON path has no fixed shape to sort on, and doing it per-row at query
+ * time is slow.
  *
- * Matches the frontend's `extractShipData` so the sorted value is the same one
- * the grid shows. Contributions not rooted on a voyage (Enslaver / Enslaved),
- * or edits that never touched the ship, simply have none.
+ * Matches the frontend's `extractShipData` -- the contributed value only, no
+ * fallback to the current name -- so the sorted value is the same one the grid
+ * shows. Contributions not rooted on a voyage (Enslaver / Enslaved), or edits
+ * that never touched the ship, simply have none.
  */
 export const extractShipName = (
   changeSet: ChangeSet | undefined | null
@@ -26,10 +27,13 @@ export const extractShipName = (
   if (!ship) {
     return null
   }
-  const direct = ship.changes?.find(
+  // Only the contributed value, matching the grid's extractShipData: the sort
+  // value is exactly what the column shows. Reading the change directly means an
+  // explicit clear (changed: null) or an edit that never touches the name both
+  // resolve to none, rather than resurrecting the current vessel name.
+  const name = ship.changes?.find(
     (s: any) => s?.kind === "direct" && s?.property === "VoyageShip_ship_name"
   )?.changed
-  const name = direct ?? ship.ownedEntity?.data?.["Name of vessel"]
   const trimmed = name == null ? "" : String(name).trim()
   return trimmed === "" ? null : trimmed
 }

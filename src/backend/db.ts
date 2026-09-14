@@ -438,7 +438,10 @@ const getFullContribution = (
 // Outcome of deleteBatch. `published_with_contributions` is the one case that
 // stays blocked, and it carries the batch so the caller can name it.
 export type DeleteBatchResult =
-  | { deleted: true }
+  // `mediaFiles` are the upload filenames whose rows were deleted, for the
+  // caller to unlink from disk after the transaction commits. Empty unless the
+  // batch's contributions were deleted too (deleteContributions).
+  | { deleted: true; mediaFiles: string[] }
   | { deleted: false; reason: "not_found" }
   | {
       deleted: false
@@ -1149,7 +1152,9 @@ export class DatabaseService {
     })
   }
 
-  async deleteContribution(id: string): Promise<boolean> {
+  async deleteContribution(
+    id: string
+  ): Promise<{ deleted: boolean; mediaFiles: string[] }> {
     // reviews and media reference the contribution with no ON DELETE CASCADE, so
     // a plain delete fails a foreign-key constraint once the contribution has
     // either. Rejected and accepted contributions carry reviews, so removing the
@@ -1161,8 +1166,16 @@ export class DatabaseService {
         relations: ["reviews", "media"]
       })
       if (!contribution) {
-        return false
+        return { deleted: false, mediaFiles: [] }
       }
+      // The upload filenames, returned so the caller can unlink them from disk
+      // after commit -- deleting the media rows only removes their metadata.
+      const mediaFiles = contribution.media?.map((m) => m.file) ?? []
+      // The change sets owned by this contribution and its reviews. Their FKs
+      // point at `changesets`, so onDelete: CASCADE never reaches them from
+      // here; capture the ids before the referencing rows go, then delete them
+      // once nothing points at them, so their bodies are not orphaned forever.
+      const changeSetIds = await this.ownedChangeSetIds(manager, id)
       if (contribution.media?.length) {
         await manager.remove(contribution.media)
       }
@@ -1170,8 +1183,32 @@ export class DatabaseService {
         await manager.remove(contribution.reviews)
       }
       const result = await manager.delete(ContributionEntity, id)
-      return result.affected ? result.affected > 0 : false
+      const deleted = result.affected ? result.affected > 0 : false
+      if (deleted && changeSetIds.length) {
+        await manager.delete(ChangeSetEntity, In(changeSetIds))
+      }
+      return { deleted, mediaFiles: deleted ? mediaFiles : [] }
     })
+  }
+
+  // The ids of the change sets a contribution and its reviews own -- the
+  // contribution's own changeSet plus one per review. Read straight from the FK
+  // columns so the change-set bodies need not be loaded just to delete them.
+  private async ownedChangeSetIds(
+    manager: EntityManager,
+    contributionId: string
+  ): Promise<string[]> {
+    const rows: { id: string | null }[] = [
+      ...(await manager.query(
+        "SELECT changeSetId AS id FROM contributions WHERE id = ?",
+        [contributionId]
+      )),
+      ...(await manager.query(
+        "SELECT changeSetId AS id FROM reviews WHERE contributionId = ?",
+        [contributionId]
+      ))
+    ]
+    return rows.map((r) => r.id).filter((id): id is string => id != null)
   }
 
   // Check whether a batch has any contributions assigned.
@@ -1269,6 +1306,7 @@ export class DatabaseService {
           return { deleted: false, reason: "published_with_contributions", batch }
         }
       }
+      let mediaFiles: string[] = []
       if (deleteContributions) {
         // Delete the batch's contributions. reviews and media reference the
         // contribution with no ON DELETE CASCADE, so remove those first. All
@@ -1276,6 +1314,30 @@ export class DatabaseService {
         // of statements, not thousands.
         const inBatch =
           "contributionId IN (SELECT id FROM contributions WHERE batchId = :batchId)"
+        // Captured before the deletes: the upload filenames (returned so the
+        // caller can unlink them after commit) and the change-set ids owned by
+        // these contributions and their reviews (deleted below, since their FKs
+        // point at `changesets` so cascade never reaches them).
+        const mediaRows: { file: string }[] = await manager.query(
+          "SELECT file FROM contribution_media WHERE contributionId IN " +
+            "(SELECT id FROM contributions WHERE batchId = ?)",
+          [batchId]
+        )
+        mediaFiles = mediaRows.map((r) => r.file).filter((f) => f != null)
+        const changeSetRows: { id: string | null }[] = [
+          ...(await manager.query(
+            "SELECT changeSetId AS id FROM contributions WHERE batchId = ?",
+            [batchId]
+          )),
+          ...(await manager.query(
+            "SELECT changeSetId AS id FROM reviews WHERE " +
+              "contributionId IN (SELECT id FROM contributions WHERE batchId = ?)",
+            [batchId]
+          ))
+        ]
+        const changeSetIds = changeSetRows
+          .map((r) => r.id)
+          .filter((id): id is string => id != null)
         await manager
           .createQueryBuilder()
           .delete()
@@ -1294,6 +1356,9 @@ export class DatabaseService {
           .from(ContributionEntity)
           .where("batchId = :batchId", { batchId })
           .execute()
+        if (changeSetIds.length) {
+          await manager.delete(ChangeSetEntity, In(changeSetIds))
+        }
       } else {
         // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.
         await manager
@@ -1305,7 +1370,7 @@ export class DatabaseService {
       }
       const result = await manager.delete(PublicationBatchEntity, batchId)
       return (result.affected ?? 0) > 0
-        ? { deleted: true }
+        ? { deleted: true, mediaFiles }
         : { deleted: false, reason: "not_found" }
     })
   }

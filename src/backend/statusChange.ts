@@ -165,7 +165,13 @@ export type BulkStatusPlan =
  * without touching the store, and the part whose answer is about the request
  * rather than about any contribution in it.
  */
-export const planBulkStatus = (contributionIds: unknown): BulkStatusPlan => {
+export const planBulkStatus = (
+  contributionIds: unknown,
+  // The action named in the refusal messages. Defaults to "decide" for the
+  // status endpoint; the delete endpoint passes "delete" so a client is not
+  // told an empty or oversized delete request is about deciding contributions.
+  action = "decide"
+): BulkStatusPlan => {
   if (!Array.isArray(contributionIds)) {
     return {
       kind: "refused",
@@ -184,7 +190,10 @@ export const planBulkStatus = (contributionIds: unknown): BulkStatusPlan => {
     return {
       kind: "refused",
       status: 400,
-      body: { error: "Nothing to decide", details: "No contributions were named." }
+      body: {
+        error: `Nothing to ${action}`,
+        details: "No contributions were named."
+      }
     }
   }
   if (ids.length > BULK_STATUS_LIMIT) {
@@ -193,7 +202,7 @@ export const planBulkStatus = (contributionIds: unknown): BulkStatusPlan => {
       status: 400,
       body: {
         error: "Too many contributions",
-        details: `One request may decide at most ${BULK_STATUS_LIMIT} contributions; ${ids.length} were named. Send them in smaller groups.`
+        details: `One request may ${action} at most ${BULK_STATUS_LIMIT} contributions; ${ids.length} were named. Send them in smaller groups.`
       }
     }
   }

@@ -29,8 +29,10 @@ const rows = [
     comments: "cherry note",
     voyageId: 700001,
     timestamp: 1000,
-    // The ship name is not a column -- it lives in the changeSet body, which
-    // the search reaches via `cs.changes LIKE`. Only alice's row carries one.
+    // Search deliberately matches the ship name in the changeSet body (via
+    // `cs.changes LIKE`), not the denormalised `contributions.shipName` sort
+    // column: the body is where any changed value is searchable, not just the
+    // ones with their own column. Only alice's row carries a ship name.
     changes: [
       {
         kind: "direct",
