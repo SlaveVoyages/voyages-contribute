@@ -4,10 +4,11 @@ import { tmpdir } from "os"
 import { join } from "path"
 
 /**
- * The root filter matches a `simple-json` column as text, so its correctness
- * depends on how the value happens to be serialized — which varies by caller
- * and is not something the query can normalize. That only shows up against a
- * real database, so this exercises one.
+ * The root filter matches the denormalised `rootSchema` / `rootId` columns,
+ * which an entity hook fills from `root` on every write regardless of how the
+ * ref was serialized or which key order the caller built it in. This exercises
+ * a real database to confirm the hook and the filter agree across every key
+ * order and both id types, and that an id is still only unique within a schema.
  */
 
 process.env.CONTRIB_DB_TYPE = "sqlite"
@@ -24,7 +25,7 @@ const { ContributionStatus } = await import("../src/models/contribution")
 const rows: { id: string; root: Record<string, unknown> }[] = [
   // contribute.ts builds { id, schema, type } — id first
   { id: "a", root: { id: 500002, schema: "Voyage", type: "existing" } },
-  // entityFetch.ts builds { type, schema, id } — id last, the case that broke
+  // entityFetch.ts builds { type, schema, id } — id last
   { id: "b", root: { type: "existing", schema: "Voyage", id: 500003 } },
   // server.ts builds { type, id, schema } — id in the middle
   { id: "c", root: { type: "existing", id: 500004, schema: "Voyage" } },
@@ -45,12 +46,16 @@ for (const { id, root } of rows) {
     timestamp: 0,
     changes: []
   })
-  await AppDataSource.manager.save(ContributionEntity, {
+  // Built with `create` so it is a class instance: the BeforeInsert hook that
+  // fills rootSchema / rootId only runs on instances, which is what every
+  // production write path (create / find then save) produces.
+  const contribution = AppDataSource.manager.create(ContributionEntity, {
     id,
     root,
     changeSet,
     status: ContributionStatus.WorkInProgress
-  } as ContributionEntity)
+  })
+  await AppDataSource.manager.save(contribution)
 }
 
 const service = new DatabaseService()
@@ -64,8 +69,7 @@ const idsMatching = async (options: {
 }
 
 test("the root filter finds an entity however its ref was serialized", async () => {
-  // Every key order and both id types, including id-last, which a pattern
-  // requiring a trailing comma misses entirely.
+  // Every key order and both id types resolve to the same rootId column value.
   expect(await idsMatching({ rootId: 500002 })).toEqual(["a", "e"])
   expect(await idsMatching({ rootId: 500003 })).toEqual(["b"])
   expect(await idsMatching({ rootId: 500004 })).toEqual(["c"])
@@ -84,12 +88,45 @@ test("the root filter finds an entity however its ref was serialized", async () 
   expect(await idsMatching({ rootId: 50000 })).toEqual([])
   expect(await idsMatching({ rootId: 5000021 })).toEqual([])
 
-  // LIKE metacharacters arrive from the query string, so they have to be
-  // matched literally rather than widening the search to everything.
+  // Column equality matches these literally: metacharacters from the query
+  // string cannot widen an equality the way they would a LIKE.
   expect(await idsMatching({ rootId: "%" })).toEqual([])
   expect(await idsMatching({ rootId: "______" })).toEqual([])
   expect(await idsMatching({ rootSchema: "%" })).toEqual([])
   expect(await idsMatching({ rootId: 500002, rootSchema: "%" })).toEqual([])
+})
+
+test("sorting by voyage id orders numerically, not as text", async () => {
+  // Ids of different lengths: a text sort would put "1000" before "999".
+  for (const rootId of [999, 1000, 90, 100000]) {
+    const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+      author: "tester",
+      title: "t",
+      comments: "",
+      timestamp: 0,
+      changes: []
+    })
+    const contribution = AppDataSource.manager.create(ContributionEntity, {
+      id: `sort-${rootId}`,
+      root: { type: "existing", schema: "SortProbe", id: rootId },
+      changeSet,
+      status: ContributionStatus.WorkInProgress
+    })
+    await AppDataSource.manager.save(contribution)
+  }
+
+  const ascending = await service.listContributions({
+    rootSchema: "SortProbe",
+    sortBy: "voyage_id",
+    sortOrder: "ASC",
+    limit: 100
+  })
+  expect(ascending.data.map((c) => c.id)).toEqual([
+    "sort-90",
+    "sort-999",
+    "sort-1000",
+    "sort-100000"
+  ])
 })
 
 test("an author is found by address, whatever name is recorded beside it", async () => {

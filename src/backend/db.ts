@@ -3,6 +3,9 @@ import fs from "fs"
 import {
   Entity,
   Column,
+  Index,
+  BeforeInsert,
+  BeforeUpdate,
   PrimaryGeneratedColumn,
   PrimaryColumn,
   ManyToOne,
@@ -164,6 +167,30 @@ export class ContributionEntity implements Contribution {
   @Column("simple-json")
   root!: EntityRef
 
+  // Denormalised from `root` on write (see createContribution) so the list can
+  // filter by the root entity's schema and id on real, indexed columns. The
+  // schema and id live inside the `root` JSON, which can only be matched with a
+  // leading-wildcard LIKE -- unindexable, so it forced a full table scan on
+  // every editorial list load. Mirroring them here turns that filter into an
+  // index lookup. `rootId` is stored as text because a root id may serialise as
+  // a string or a number, and both are compared as the same value.
+  @Index()
+  @Column({ type: "varchar", nullable: true })
+  rootSchema?: string | null
+
+  @Index()
+  @Column({ type: "varchar", nullable: true })
+  rootId?: string | null
+
+  // The root id again, as a number, for ordering the list by voyage id. `rootId`
+  // is text (an id may be a string), and a text sort is lexicographic -- "1000"
+  // would fall before "999". This column holds the id only when it is a whole
+  // number, so `ORDER BY rootIdNum` is numeric and index-backed; a non-numeric
+  // id (e.g. a not-yet-saved entity) is null and sorts at one end.
+  @Index()
+  @Column({ type: "bigint", nullable: true })
+  rootIdNum?: string | null
+
   @ManyToOne(() => ChangeSetEntity, {
     cascade: true,
     onDelete: "CASCADE",
@@ -173,6 +200,9 @@ export class ContributionEntity implements Contribution {
   @JoinColumn()
   changeSet!: ChangeSetEntity
 
+  // Indexed because it is the selective filter on every editorial list query
+  // (`WHERE status IN (...)`); without it the query scans the whole table.
+  @Index()
   @Column({ type: "int" })
   status!: ContributionStatus
 
@@ -180,12 +210,15 @@ export class ContributionEntity implements Contribution {
   // list can order by ship name -- it has no column of its own in the change
   // tree, and a JSON path there is neither fixed nor cheap to sort on. Null for
   // contributions not about a voyage, or edits that never touched the ship.
+  // Indexed so `ORDER BY shipName` does not filesort the whole table.
+  @Index()
   @Column({ type: "varchar", nullable: true })
   shipName?: string | null
 
   // Denormalised ship nationality, same rationale as shipName: read from the
   // changeSet on write so the list can order by it. Null for contributions not
   // about a voyage, or edits that never touched the ship's nationality.
+  @Index()
   @Column({ type: "varchar", nullable: true })
   nationality?: string | null
 
@@ -211,6 +244,22 @@ export class ContributionEntity implements Contribution {
 
   @Column({ type: "bigint", nullable: true, transformer: epochMilliseconds })
   decidedAt?: number | null
+
+  // Keep the denormalised root columns in step with `root` on every write, so
+  // the list can filter on them whatever path saved the row. Derived from the
+  // entity's own `root` (a scalar column, always loaded), so an update never
+  // clears them. `rootId` is stored as text: a root id may be a string or a
+  // number, and the filter compares both as the same string.
+  @BeforeInsert()
+  @BeforeUpdate()
+  syncRootColumns(): void {
+    const id = this.root?.id
+    this.rootSchema = this.root?.schema != null ? String(this.root.schema) : null
+    this.rootId = id != null ? String(id) : null
+    // Kept as a string so a large id survives without float rounding; the bigint
+    // column orders it numerically. Only a whole number qualifies.
+    this.rootIdNum = id != null && /^-?\d+$/.test(String(id)) ? String(id) : null
+  }
 }
 
 // Database connection
@@ -326,7 +375,10 @@ const applyOrderToQueryBuilder = (
     qb.addSelect(sql, "list_sort_key").orderBy("list_sort_key", sortOrder)
   switch (sortBy) {
     case "voyage_id":
-      orderBySubquery("json_extract(contribution.root, '$.id')")
+      // The voyage id is denormalised onto the indexed `rootIdNum` column, so it
+      // orders numerically off an index rather than by extracting it from the
+      // `root` JSON on every row.
+      qb.orderBy("contribution.rootIdNum", sortOrder)
       break
     case "author":
       orderBySubquery(
@@ -414,6 +466,8 @@ export class DatabaseService {
       id: data.id || uuidv4(),
       // Recomputed on every save so it tracks the ship as the changeSet is
       // edited; null when the change tree names no ship.
+      // (rootSchema / rootId are filled from `root` by the entity's
+      // BeforeInsert/BeforeUpdate hook, so they need no assignment here.)
       shipName: extractShipName(data.changeSet),
       nationality: extractNationality(data.changeSet)
     } as ContributionEntity)
@@ -589,65 +643,32 @@ export class DatabaseService {
       where.changeSet = changeSetWhere
     }
 
-    // `root` is a simple-json column, so it is matched as text. This lets a
-    // caller ask whether one entity already has a contribution instead of
-    // paging the whole table and filtering client side.
+    // The root entity's schema and id are denormalised onto their own indexed
+    // columns (`rootSchema` / `rootId`), so this filter is a plain equality on
+    // an index rather than a leading-wildcard LIKE over the `root` JSON, which
+    // no index can serve and which forced a full table scan on every load.
     //
-    // Four patterns because two things vary independently and neither is ours
-    // to fix from here: an id may be serialised as a string or a number, and
-    // JSON.stringify emits keys in the order the object happened to be built,
-    // so `id` may be followed by a comma or by the closing brace.
-    //
-    // Ids are only unique within a schema, so `rootSchema` narrows the match:
-    // without it a voyage id also matches a contribution rooted at another
-    // entity that happens to share the number. Both conditions have to go in
-    // one `Raw`, since a where clause holds a single condition per column.
-    if (rootId !== undefined || rootSchema !== undefined) {
-      const clauses: string[] = []
-      const parameters: Record<string, string> = {}
-
-      if (rootId !== undefined) {
-        const id = likeLiteral(String(rootId))
-        Object.assign(parameters, {
-          rootIdTextComma: `%"id":"${id}",%`,
-          rootIdTextEnd: `%"id":"${id}"}%`,
-          rootIdNumComma: `%"id":${id},%`,
-          rootIdNumEnd: `%"id":${id}}%`
-        })
-        clauses.push(
-          "(" +
-            [
-              "rootIdTextComma",
-              "rootIdTextEnd",
-              "rootIdNumComma",
-              "rootIdNumEnd"
-            ]
-              .map((name) => `COLUMN LIKE :${name} ESCAPE '${LIKE_ESCAPE}'`)
-              .join(" OR ") +
-            ")"
-        )
-      }
-
-      if (rootSchema !== undefined) {
-        parameters.rootSchema = `%"schema":"${likeLiteral(rootSchema)}"%`
-        clauses.push(`COLUMN LIKE :rootSchema ESCAPE '${LIKE_ESCAPE}'`)
-      }
-
-      const sql = clauses.join(" AND ")
-      where.root = Raw(
-        (column) => sql.replace(/COLUMN/g, column),
-        parameters
-      )
+    // Ids are only unique within a schema, so both are matched together when
+    // both are given: without the schema a voyage id would also match a
+    // contribution rooted at another entity that happens to share the number.
+    // `rootId` is compared as text because a root id may be a string or number
+    // and the column stores whichever it was, as a string.
+    if (rootSchema !== undefined) {
+      where.rootSchema = rootSchema
+    }
+    if (rootId !== undefined) {
+      where.rootId = String(rootId)
     }
 
     // Calculate offset
     const offset = (page - 1) * limit
 
-    // A free-text search, or ordering by the voyage id, both need a query
-    // builder: the search is an OR group across columns and a relation, and the
-    // voyage id lives inside `root` (a simple-json column) so it has no column
-    // of its own to name in a find-options `order`.
-    const useQueryBuilder = search !== undefined || sortBy === "voyage_id"
+    // Only a free-text search needs a query builder: it is an OR group across
+    // columns and a relation. Ordering by the voyage id no longer does -- it is
+    // the `rootIdNum` column now, nameable in a find-options `order` like any
+    // other. (A search combined with a voyage-id sort still lands here, and
+    // applyOrderToQueryBuilder orders it by that same column.)
+    const useQueryBuilder = search !== undefined
 
     if (useQueryBuilder) {
       const qb = this.contributionRepo
@@ -720,9 +741,7 @@ export class DatabaseService {
 
     // Build order clause.
     //
-    // Real columns and to-one relations are offered. Ordering by `root` (the
-    // voyage id / contribution type) goes through the query builder above; it
-    // cannot go here because it is a JSON path, not a column.
+    // Real columns and to-one relations are offered.
     const order: any = {}
     if (sortBy === "author") {
       order.changeSet = { author: sortOrder }
@@ -732,6 +751,9 @@ export class DatabaseService {
       order.changeSet = { comments: sortOrder }
     } else if (sortBy === "status") {
       order.status = sortOrder
+    } else if (sortBy === "voyage_id") {
+      // Denormalised numeric voyage id; see the rootIdNum column.
+      order.rootIdNum = sortOrder
     } else if (sortBy === "shipName") {
       order.shipName = sortOrder
     } else if (sortBy === "nationality") {

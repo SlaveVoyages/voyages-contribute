@@ -4,6 +4,7 @@ import { RecordDecisionAuthors1786200000000 } from "./1786200000000-RecordDecisi
 import { PublishedAsEpochMillis1786300000000 } from "./1786300000000-PublishedAsEpochMillis"
 import { ContributionShipName1786400000000 } from "./1786400000000-ContributionShipName"
 import { ContributionNationality1786500000000 } from "./1786500000000-ContributionNationality"
+import { ContributionRootColumnsAndIndexes1786600000000 } from "./1786600000000-ContributionRootColumnsAndIndexes"
 
 /**
  * The schema as it stood when migrations were introduced, reproducing what
@@ -174,5 +175,6 @@ export const AllMigrations = [
   RecordDecisionAuthors1786200000000,
   PublishedAsEpochMillis1786300000000,
   ContributionShipName1786400000000,
-  ContributionNationality1786500000000
+  ContributionNationality1786500000000,
+  ContributionRootColumnsAndIndexes1786600000000
 ]
