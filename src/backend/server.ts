@@ -353,6 +353,19 @@ const getPaginationArgs = (
 }
 
 // Get all contributions with filtering, sorting and pagination
+// A status query parameter, single (`?status=1`) or repeated (`?status=1&status=2`).
+const parseStatusParam = (
+  raw: unknown
+): ContributionStatus | ContributionStatus[] | undefined => {
+  if (raw === undefined) {
+    return undefined
+  }
+  if (Array.isArray(raw)) {
+    return (raw as string[]).map((s) => parseInt(s) as ContributionStatus)
+  }
+  return parseInt(raw as string) as ContributionStatus
+}
+
 app.get("/contributions", authenticateJWT, async (req, res) => {
   try {
     // Parse query parameters
@@ -364,20 +377,12 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
           : null
         : undefined
 
-    // Parse status filter (can be single value or array)
-    let status: ContributionStatus | ContributionStatus[] | undefined =
-      undefined
-    if (req.query.status !== undefined) {
-      if (Array.isArray(req.query.status)) {
-        // Multiple status values
-        status = (req.query.status as string[]).map(
-          (s) => parseInt(s) as ContributionStatus
-        )
-      } else {
-        // Single status value
-        status = parseInt(req.query.status as string) as ContributionStatus
-      }
-    }
+    // Parse status / exclude_status filters (each a single value or an array).
+    const status = parseStatusParam(req.query.status)
+    // Statuses to leave out when no explicit status is asked for. The lists send
+    // `exclude_status=Published` so their default view is not swamped by the
+    // published rows, which are the bulk of the table.
+    const excludeStatus = parseStatusParam(req.query.exclude_status)
 
     // Lets a client ask whether one entity already has a contribution, rather
     // than paging the whole table to find out. The schema narrows it, since
@@ -472,6 +477,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
         allowSensitiveSort: canReadSensitive
       }),
       status,
+      excludeStatus,
       batchId,
       rootId,
       rootSchema,
@@ -557,21 +563,17 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
     }
     // The contributor's own contributions. Historically this was WorkInProgress
     // only; it now returns every status so submitted (and decided) work shows on
-    // the Contribute home too. An optional ?status filter narrows it (single
-    // value or repeated for several), matching the editor /contributions route.
-    let status: ContributionStatus | ContributionStatus[] | undefined =
-      undefined
-    if (req.query.status !== undefined) {
-      status = Array.isArray(req.query.status)
-        ? (req.query.status as string[]).map(
-            (s) => parseInt(s) as ContributionStatus
-          )
-        : (parseInt(req.query.status as string) as ContributionStatus)
-    }
+    // the Contribute home too. An optional ?status narrows it, and
+    // ?exclude_status leaves statuses out -- the All Request list sends
+    // exclude_status=Published by default so it is not swamped by published
+    // rows. Both match the editor /contributions route.
+    const status = parseStatusParam(req.query.status)
+    const excludeStatus = parseStatusParam(req.query.exclude_status)
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author,
-      status
+      status,
+      excludeStatus
     })
     res.json(contributions)
   } catch (error) {
