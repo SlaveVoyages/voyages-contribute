@@ -111,11 +111,6 @@ const ensureUploadDir = async () => {
   }
 }
 
-// Unlink uploaded files whose media rows were just deleted. Deleting a
-// contribution or a batch removes only the media metadata; the files under
-// uploadDir would otherwise be orphaned on disk with no row left to find them
-// by. Called after the delete commits, and never lets a missing file fail the
-// request -- mirrors the single /media/:mediaId deletion path.
 const unlinkMediaFiles = async (files: string[]): Promise<void> => {
   for (const file of files) {
     const filePath = path.join(uploadDir, file)
@@ -561,19 +556,10 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
         .json({ error: "Cannot determine author from token or request" })
       return
     }
-    // The contributor's own contributions. Historically this was WorkInProgress
-    // only; it now returns every status so submitted (and decided) work shows on
-    // the Contribute home too. An optional ?status narrows it, and
-    // ?exclude_status leaves statuses out -- the All Request list sends
-    // exclude_status=Published by default so it is not swamped by published
-    // rows. Both match the editor /contributions route.
-    const status = parseStatusParam(req.query.status)
-    const excludeStatus = parseStatusParam(req.query.exclude_status)
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author,
-      status,
-      excludeStatus
+      status: ContributionStatus.WorkInProgress
     })
     res.json(contributions)
   } catch (error) {

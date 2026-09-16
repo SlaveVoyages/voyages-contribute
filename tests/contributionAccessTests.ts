@@ -129,50 +129,6 @@ test("sorting by voyage id orders numerically, not as text", async () => {
   ])
 })
 
-test("excludeStatus leaves out those statuses when no status is asked for", async () => {
-  const probes: { id: string; status: number }[] = [
-    { id: "flt-wip", status: ContributionStatus.WorkInProgress },
-    { id: "flt-sub", status: ContributionStatus.Submitted },
-    { id: "flt-pub1", status: ContributionStatus.Published },
-    { id: "flt-pub2", status: ContributionStatus.Published }
-  ]
-  for (const { id, status } of probes) {
-    const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-      author: "tester",
-      title: "t",
-      comments: "",
-      timestamp: 0,
-      changes: []
-    })
-    const contribution = AppDataSource.manager.create(ContributionEntity, {
-      id,
-      root: { type: "existing", schema: "FilterProbe", id: 1 },
-      changeSet,
-      status
-    })
-    await AppDataSource.manager.save(contribution)
-  }
-
-  // The editorial default: everything except Published.
-  const active = await service.listContributions({
-    rootSchema: "FilterProbe",
-    excludeStatus: ContributionStatus.Published,
-    limit: 100
-  })
-  expect(active.data.map((c) => c.id).sort()).toEqual(["flt-sub", "flt-wip"])
-
-  // Published is still reachable by asking for it explicitly.
-  const published = await service.listContributions({
-    rootSchema: "FilterProbe",
-    status: ContributionStatus.Published,
-    limit: 100
-  })
-  expect(published.data.map((c) => c.id).sort()).toEqual([
-    "flt-pub1",
-    "flt-pub2"
-  ])
-})
-
 test("an author is found by address, whatever name is recorded beside it", async () => {
   const { authorIdentity } = await import("../src/backend/authz")
 
@@ -218,7 +174,7 @@ test("an author is found by address, whatever name is recorded beside it", async
       root: { type: "existing", schema: "Voyage", id: 900000 + index },
       changeSet,
       status: ContributionStatus.WorkInProgress
-    } as ContributionEntity)
+    })
   }
 
   const mine = await service.listContributions({
