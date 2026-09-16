@@ -111,6 +111,22 @@ const ensureUploadDir = async () => {
   }
 }
 
+// Unlink uploaded files whose media rows were just deleted. Deleting a
+// contribution or a batch removes only the media metadata; the files under
+// uploadDir would otherwise be orphaned on disk with no row left to find them
+// by. Called after the delete commits, and never lets a missing file fail the
+// request -- mirrors the single /media/:mediaId deletion path.
+const unlinkMediaFiles = async (files: string[]): Promise<void> => {
+  for (const file of files) {
+    const filePath = path.join(uploadDir, file)
+    try {
+      await fs.unlink(filePath)
+    } catch (error) {
+      console.warn(`Failed to delete file ${filePath}:`, error)
+    }
+  }
+}
+
 // Configure multer storage
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
@@ -274,9 +290,13 @@ const SORTABLE_COLUMNS = [
   "decidedBy",
   "batch",
   // Materialized from `root` via a JSON path -- best-effort, see
-  // listContributions. Ship and Nationality are not offered: they are not
-  // stored on the contribution at all.
-  "voyage_id"
+  // listContributions.
+  "voyage_id",
+  // Denormalised into columns on write (contributions.shipName /
+  // contributions.nationality), so they can be ordered. Both are redacted
+  // changeSet content, so they are sensitive below.
+  "shipName",
+  "nationality"
 ] as const
 type SortableColumn = (typeof SORTABLE_COLUMNS)[number]
 
@@ -292,7 +312,11 @@ const SENSITIVE_SORT_COLUMNS: readonly SortableColumn[] = [
   "timestamp",
   "comments",
   "decidedBy",
-  "batch"
+  "batch",
+  // The ship name and nationality come from the redacted changeSet, so ordering
+  // the shared list by them would leak them the same way author/comments would.
+  "shipName",
+  "nationality"
 ]
 
 const getPaginationArgs = (
@@ -531,18 +555,31 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
         .json({ error: "Cannot determine author from token or request" })
       return
     }
+    // The contributor's own contributions. Historically this was WorkInProgress
+    // only; it now returns every status so submitted (and decided) work shows on
+    // the Contribute home too. An optional ?status filter narrows it (single
+    // value or repeated for several), matching the editor /contributions route.
+    let status: ContributionStatus | ContributionStatus[] | undefined =
+      undefined
+    if (req.query.status !== undefined) {
+      status = Array.isArray(req.query.status)
+        ? (req.query.status as string[]).map(
+            (s) => parseInt(s) as ContributionStatus
+          )
+        : (parseInt(req.query.status as string) as ContributionStatus)
+    }
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author,
-      status: ContributionStatus.WorkInProgress
+      status
     })
     res.json(contributions)
   } catch (error) {
     console.error(
-      `Error fetching WIP contributions for author ${getAuthorFromRequest(req)}:`,
+      `Error fetching contributions for author ${getAuthorFromRequest(req)}:`,
       error
     )
-    res.status(500).json({ error: "Failed to fetch WIP contributions" })
+    res.status(500).json({ error: "Failed to fetch contributions" })
   }
 })
 
@@ -646,11 +683,14 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
       })
       return
     }
-    const success = await dbService.deleteContribution(req.params.id)
-    if (!success) {
+    const { deleted, mediaFiles } = await dbService.deleteContribution(
+      req.params.id
+    )
+    if (!deleted) {
       res.status(500).json({ error: "Failed to delete contribution" })
       return
     }
+    await unlinkMediaFiles(mediaFiles)
     res.status(204).end()
   } catch (error) {
     console.error("Error deleting WIP contributions:", error)
@@ -890,6 +930,74 @@ app.patch("/contributions/bulk-status", authenticateJWT, async (req, res) => {
     })
   }
 })
+
+// Bulk-delete contributions from the editorial table. Editor-only
+app.post(
+  "/contributions/bulk-delete",
+  authenticateJWT,
+  requireEditor,
+  async (req, res) => {
+    try {
+      const plan = planBulkStatus(req.body?.contributionIds, "delete")
+      if (plan.kind === "refused") {
+        res.status(plan.status).json(plan.body)
+        return
+      }
+      const changed: string[] = []
+      const mediaFiles: string[] = []
+      const refused: {
+        id: string
+        status: number
+        error: string
+        details?: string
+      }[] = []
+      for (const id of plan.ids) {
+        try {
+          const existing = await dbService.getContribution(id)
+          if (!existing) {
+            refused.push({ id, status: 404, error: "Contribution not found" })
+            continue
+          }
+          if (existing.status === ContributionStatus.Published) {
+            refused.push({
+              id,
+              status: 400,
+              error: "Published contributions cannot be deleted"
+            })
+            continue
+          }
+          const result = await dbService.deleteContribution(id)
+          if (result.deleted) {
+            changed.push(id)
+            mediaFiles.push(...result.mediaFiles)
+          } else {
+            refused.push({
+              id,
+              status: 500,
+              error: "Failed to delete contribution"
+            })
+          }
+        } catch (err) {
+          refused.push({
+            id,
+            status: 500,
+            error: "Failed to delete contribution",
+            details: (err as Error).message
+          })
+        }
+      }
+      // Unlink the deleted contributions' upload files once, after the loop.
+      await unlinkMediaFiles(mediaFiles)
+      res.json({ requested: plan.ids.length, changed, unchanged: [], refused })
+    } catch (error) {
+      console.error("Error bulk-deleting contributions:", error)
+      res.status(500).json({
+        error: "Failed to delete contributions",
+        details: (error as Error).message
+      })
+    }
+  }
+)
 
 // Add review to contribution
 // Reviewing is an editorial act, so the role is what stands in front of it.
@@ -1194,10 +1302,12 @@ app.patch("/edit_batch", authenticateJWT, requireEditor, async (req, res) => {
 })
 
 app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
-  // A pending batch's contributions are unassigned and the batch deleted -- the
-  // behaviour the delete-batch modal already promises. A published batch that
-  // still holds contributions stays blocked: unassigning them would corrupt the
-  // record of what it published.
+  // Two modes, chosen by the editor in the remove-batch dialog:
+  //  - default: unassign the batch's contributions and delete the batch (they
+  //    survive, back in the pool).
+  //  - ?deleteContributions=true: delete the contributions as well, then the
+  //    batch (destructive).
+  // A published batch that still holds contributions stays blocked either way.
   try {
     const batchId = parseInt(req.params.id)
     if (isNaN(batchId)) {
@@ -1207,8 +1317,10 @@ app.delete("/batches/:id", authenticateJWT, requireEditor, async (req, res) => {
       })
       return
     }
-    const result = await dbService.deleteBatch(batchId)
+    const deleteContributions = req.query.deleteContributions === "true"
+    const result = await dbService.deleteBatch(batchId, deleteContributions)
     if (result.deleted) {
+      await unlinkMediaFiles(result.mediaFiles)
       res.status(204).send()
       return
     }

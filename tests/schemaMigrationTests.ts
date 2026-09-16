@@ -20,7 +20,7 @@ const { AppDataSource } = await import("../src/backend/db")
 await AppDataSource.initialize()
 
 const publishedType = async () => {
-  const info = await AppDataSource.query(`PRAGMA table_info(publication_batches)`)
+  const info = await AppDataSource.query("PRAGMA table_info(publication_batches)")
   return info.find((c: { name: string }) => c.name === "published")?.type
 }
 
@@ -28,13 +28,20 @@ test("a publication date is stored as a number, and can be rolled back", async (
   await AppDataSource.runMigrations({ transaction: "all" })
   expect(await publishedType()).toBe("bigint")
 
-  const fks = await AppDataSource.query(`PRAGMA foreign_key_list(contributions)`)
+  const fks = await AppDataSource.query("PRAGMA foreign_key_list(contributions)")
   expect(fks.map((f: { table: string }) => f.table).sort()).toEqual([
     "changesets",
     "publication_batches"
   ])
 
-  await AppDataSource.undoLastMigration({ transaction: "all" })
+  // Roll back past PublishedAsEpochMillis. It is no longer necessarily the last
+  // migration (later ones may sit on top), so undo one at a time until the
+  // published column reverts, rather than assuming a single undo reaches it.
+  let guard = 0
+  while ((await publishedType()) !== "varchar") {
+    await AppDataSource.undoLastMigration({ transaction: "all" })
+    if (++guard > 20) throw new Error("published column never reverted")
+  }
   expect(await publishedType()).toBe("varchar")
 
   // Applied again after the rollback.

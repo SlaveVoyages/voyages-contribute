@@ -58,14 +58,17 @@ for (const { id, comments, timestamp, status, voyageId, decidedBy, batch } of ro
     timestamp,
     changes: []
   })
-  await AppDataSource.manager.save(ContributionEntity, {
+  // `create` (not a plain object) so the BeforeInsert hook fills rootIdNum,
+  // which the voyage-id sort orders by -- the same instance path production uses.
+  const contribution = AppDataSource.manager.create(ContributionEntity, {
     id,
     root: { type: "existing", schema: "Voyage", id: voyageId },
     changeSet,
     status,
     decidedBy,
     batch: batchByTitle.get(batch)
-  } as ContributionEntity)
+  })
+  await AppDataSource.manager.save(contribution)
 }
 
 const service = new DatabaseService()

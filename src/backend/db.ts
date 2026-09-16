@@ -3,6 +3,9 @@ import fs from "fs"
 import {
   Entity,
   Column,
+  Index,
+  BeforeInsert,
+  BeforeUpdate,
   PrimaryGeneratedColumn,
   PrimaryColumn,
   ManyToOne,
@@ -24,6 +27,8 @@ import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
 import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
+import { extractNationality } from "./nationality"
+import { extractShipName } from "./shipName"
 import {
   BatchWithCounts,
   ChangeSet,
@@ -162,6 +167,30 @@ export class ContributionEntity implements Contribution {
   @Column("simple-json")
   root!: EntityRef
 
+  // Denormalised from `root` on write (see createContribution) so the list can
+  // filter by the root entity's schema and id on real, indexed columns. The
+  // schema and id live inside the `root` JSON, which can only be matched with a
+  // leading-wildcard LIKE -- unindexable, so it forced a full table scan on
+  // every editorial list load. Mirroring them here turns that filter into an
+  // index lookup. `rootId` is stored as text because a root id may serialise as
+  // a string or a number, and both are compared as the same value.
+  @Index()
+  @Column({ type: "varchar", nullable: true })
+  rootSchema?: string | null
+
+  @Index()
+  @Column({ type: "varchar", nullable: true })
+  rootId?: string | null
+
+  // The root id again, as a number, for ordering the list by voyage id. `rootId`
+  // is text (an id may be a string), and a text sort is lexicographic -- "1000"
+  // would fall before "999". This column holds the id only when it is a whole
+  // number, so `ORDER BY rootIdNum` is numeric and index-backed; a non-numeric
+  // id (e.g. a not-yet-saved entity) is null and sorts at one end.
+  @Index()
+  @Column({ type: "bigint", nullable: true })
+  rootIdNum?: string | null
+
   @ManyToOne(() => ChangeSetEntity, {
     cascade: true,
     onDelete: "CASCADE",
@@ -171,8 +200,27 @@ export class ContributionEntity implements Contribution {
   @JoinColumn()
   changeSet!: ChangeSetEntity
 
+  // Indexed because it is the selective filter on every editorial list query
+  // (`WHERE status IN (...)`); without it the query scans the whole table.
+  @Index()
   @Column({ type: "int" })
   status!: ContributionStatus
+
+  // Denormalised from the changeSet on write (see createContribution) so the
+  // list can order by ship name -- it has no column of its own in the change
+  // tree, and a JSON path there is neither fixed nor cheap to sort on. Null for
+  // contributions not about a voyage, or edits that never touched the ship.
+  // Indexed so `ORDER BY shipName` does not filesort the whole table.
+  @Index()
+  @Column({ type: "varchar", nullable: true })
+  shipName?: string | null
+
+  // Denormalised ship nationality, same rationale as shipName: read from the
+  // changeSet on write so the list can order by it. Null for contributions not
+  // about a voyage, or edits that never touched the ship's nationality.
+  @Index()
+  @Column({ type: "varchar", nullable: true })
+  nationality?: string | null
 
   @OneToMany(() => ReviewEntity, (review) => review.contribution, {
     cascade: true
@@ -196,6 +244,22 @@ export class ContributionEntity implements Contribution {
 
   @Column({ type: "bigint", nullable: true, transformer: epochMilliseconds })
   decidedAt?: number | null
+
+  // Keep the denormalised root columns in step with `root` on every write, so
+  // the list can filter on them whatever path saved the row. Derived from the
+  // entity's own `root` (a scalar column, always loaded), so an update never
+  // clears them. `rootId` is stored as text: a root id may be a string or a
+  // number, and the filter compares both as the same string.
+  @BeforeInsert()
+  @BeforeUpdate()
+  syncRootColumns(): void {
+    const id = this.root?.id
+    this.rootSchema = this.root?.schema != null ? String(this.root.schema) : null
+    this.rootId = id != null ? String(id) : null
+    // Kept as a string so a large id survives without float rounding; the bigint
+    // column orders it numerically. Only a whole number qualifies.
+    this.rootIdNum = id != null && /^-?\d+$/.test(String(id)) ? String(id) : null
+  }
 }
 
 // Database connection
@@ -311,7 +375,10 @@ const applyOrderToQueryBuilder = (
     qb.addSelect(sql, "list_sort_key").orderBy("list_sort_key", sortOrder)
   switch (sortBy) {
     case "voyage_id":
-      orderBySubquery("json_extract(contribution.root, '$.id')")
+      // The voyage id is denormalised onto the indexed `rootIdNum` column, so it
+      // orders numerically off an index rather than by extracting it from the
+      // `root` JSON on every row.
+      qb.orderBy("contribution.rootIdNum", sortOrder)
       break
     case "author":
       orderBySubquery(
@@ -339,6 +406,12 @@ const applyOrderToQueryBuilder = (
     case "decidedBy":
       qb.orderBy("contribution.decidedBy", sortOrder)
       break
+    case "shipName":
+      qb.orderBy("contribution.shipName", sortOrder)
+      break
+    case "nationality":
+      qb.orderBy("contribution.nationality", sortOrder)
+      break
     default:
       qb.orderBy("contribution.id", sortOrder)
   }
@@ -365,7 +438,10 @@ const getFullContribution = (
 // Outcome of deleteBatch. `published_with_contributions` is the one case that
 // stays blocked, and it carries the batch so the caller can name it.
 export type DeleteBatchResult =
-  | { deleted: true }
+  // `mediaFiles` are the upload filenames whose rows were deleted, for the
+  // caller to unlink from disk after the transaction commits. Empty unless the
+  // batch's contributions were deleted too (deleteContributions).
+  | { deleted: true; mediaFiles: string[] }
   | { deleted: false; reason: "not_found" }
   | {
       deleted: false
@@ -390,7 +466,13 @@ export class DatabaseService {
   ): Promise<ContributionEntity> {
     const contribution = this.contributionRepo.create({
       ...data,
-      id: data.id || uuidv4()
+      id: data.id || uuidv4(),
+      // Recomputed on every save so it tracks the ship as the changeSet is
+      // edited; null when the change tree names no ship.
+      // (rootSchema / rootId are filled from `root` by the entity's
+      // BeforeInsert/BeforeUpdate hook, so they need no assignment here.)
+      shipName: extractShipName(data.changeSet),
+      nationality: extractNationality(data.changeSet)
     } as ContributionEntity)
     return this.contributionRepo.save(contribution)
   }
@@ -462,6 +544,8 @@ export class DatabaseService {
         | "decidedBy"
         | "batch"
         | "voyage_id"
+        | "shipName"
+        | "nationality"
       sortOrder?: "ASC" | "DESC"
       /**
        * Free-text search. Case-insensitive OR match across the contribution id,
@@ -562,65 +646,32 @@ export class DatabaseService {
       where.changeSet = changeSetWhere
     }
 
-    // `root` is a simple-json column, so it is matched as text. This lets a
-    // caller ask whether one entity already has a contribution instead of
-    // paging the whole table and filtering client side.
+    // The root entity's schema and id are denormalised onto their own indexed
+    // columns (`rootSchema` / `rootId`), so this filter is a plain equality on
+    // an index rather than a leading-wildcard LIKE over the `root` JSON, which
+    // no index can serve and which forced a full table scan on every load.
     //
-    // Four patterns because two things vary independently and neither is ours
-    // to fix from here: an id may be serialised as a string or a number, and
-    // JSON.stringify emits keys in the order the object happened to be built,
-    // so `id` may be followed by a comma or by the closing brace.
-    //
-    // Ids are only unique within a schema, so `rootSchema` narrows the match:
-    // without it a voyage id also matches a contribution rooted at another
-    // entity that happens to share the number. Both conditions have to go in
-    // one `Raw`, since a where clause holds a single condition per column.
-    if (rootId !== undefined || rootSchema !== undefined) {
-      const clauses: string[] = []
-      const parameters: Record<string, string> = {}
-
-      if (rootId !== undefined) {
-        const id = likeLiteral(String(rootId))
-        Object.assign(parameters, {
-          rootIdTextComma: `%"id":"${id}",%`,
-          rootIdTextEnd: `%"id":"${id}"}%`,
-          rootIdNumComma: `%"id":${id},%`,
-          rootIdNumEnd: `%"id":${id}}%`
-        })
-        clauses.push(
-          "(" +
-            [
-              "rootIdTextComma",
-              "rootIdTextEnd",
-              "rootIdNumComma",
-              "rootIdNumEnd"
-            ]
-              .map((name) => `COLUMN LIKE :${name} ESCAPE '${LIKE_ESCAPE}'`)
-              .join(" OR ") +
-            ")"
-        )
-      }
-
-      if (rootSchema !== undefined) {
-        parameters.rootSchema = `%"schema":"${likeLiteral(rootSchema)}"%`
-        clauses.push(`COLUMN LIKE :rootSchema ESCAPE '${LIKE_ESCAPE}'`)
-      }
-
-      const sql = clauses.join(" AND ")
-      where.root = Raw(
-        (column) => sql.replace(/COLUMN/g, column),
-        parameters
-      )
+    // Ids are only unique within a schema, so both are matched together when
+    // both are given: without the schema a voyage id would also match a
+    // contribution rooted at another entity that happens to share the number.
+    // `rootId` is compared as text because a root id may be a string or number
+    // and the column stores whichever it was, as a string.
+    if (rootSchema !== undefined) {
+      where.rootSchema = rootSchema
+    }
+    if (rootId !== undefined) {
+      where.rootId = String(rootId)
     }
 
     // Calculate offset
     const offset = (page - 1) * limit
 
-    // A free-text search, or ordering by the voyage id, both need a query
-    // builder: the search is an OR group across columns and a relation, and the
-    // voyage id lives inside `root` (a simple-json column) so it has no column
-    // of its own to name in a find-options `order`.
-    const useQueryBuilder = search !== undefined || sortBy === "voyage_id"
+    // Only a free-text search needs a query builder: it is an OR group across
+    // columns and a relation. Ordering by the voyage id no longer does -- it is
+    // the `rootIdNum` column now, nameable in a find-options `order` like any
+    // other. (A search combined with a voyage-id sort still lands here, and
+    // applyOrderToQueryBuilder orders it by that same column.)
+    const useQueryBuilder = search !== undefined
 
     if (useQueryBuilder) {
       const qb = this.contributionRepo
@@ -643,15 +694,25 @@ export class DatabaseService {
               `json_extract(contribution.root, '$.id') LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
               { searchTerm: term }
             )
-            // Sensitive fields (author / title / comments) live on the
-            // changeSet. Matched via a subquery keyed by the FK so this does not
-            // depend on the join alias. For an editor, across every row; for a
-            // contributor, only their own rows -- named by identity -- so a
-            // search cannot probe the redacted content of other people's work.
+            // Sensitive fields (author / title / comments) plus the changeSet
+            // body live on the changeSet. Matched via a subquery keyed by the
+            // FK so this does not depend on the join alias. For an editor,
+            // across every row; for a contributor, only their own rows -- named
+            // by identity -- so a search cannot probe the redacted content of
+            // other people's work.
+            //
+            // `cs.changes` is the whole edit as one simple-json (text) column.
+            // A LIKE over it is how the ship name -- and any other value buried
+            // in the change tree, which has no column of its own -- becomes
+            // searchable. It is deliberately broad: a term can match a value
+            // anywhere in the tree, not only the ship, and matches the raw JSON
+            // (so it also sees the property keys). That is the trade for
+            // searching a field the schema does not surface as a column.
             const sensitive =
               `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
               ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
-              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
+              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+              ` OR cs.changes LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
             if (searchSensitiveScope === "all") {
               b.orWhere(
                 `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
@@ -683,9 +744,7 @@ export class DatabaseService {
 
     // Build order clause.
     //
-    // Real columns and to-one relations are offered. Ordering by `root` (the
-    // voyage id / contribution type) goes through the query builder above; it
-    // cannot go here because it is a JSON path, not a column.
+    // Real columns and to-one relations are offered.
     const order: any = {}
     if (sortBy === "author") {
       order.changeSet = { author: sortOrder }
@@ -695,6 +754,13 @@ export class DatabaseService {
       order.changeSet = { comments: sortOrder }
     } else if (sortBy === "status") {
       order.status = sortOrder
+    } else if (sortBy === "voyage_id") {
+      // Denormalised numeric voyage id; see the rootIdNum column.
+      order.rootIdNum = sortOrder
+    } else if (sortBy === "shipName") {
+      order.shipName = sortOrder
+    } else if (sortBy === "nationality") {
+      order.nationality = sortOrder
     } else if (sortBy === "decidedBy") {
       order.decidedBy = sortOrder
     } else if (sortBy === "batch") {
@@ -1086,9 +1152,63 @@ export class DatabaseService {
     })
   }
 
-  async deleteContribution(id: string): Promise<boolean> {
-    const result = await this.contributionRepo.delete(id)
-    return result.affected ? result.affected > 0 : false
+  async deleteContribution(
+    id: string
+  ): Promise<{ deleted: boolean; mediaFiles: string[] }> {
+    // reviews and media reference the contribution with no ON DELETE CASCADE, so
+    // a plain delete fails a foreign-key constraint once the contribution has
+    // either. Rejected and accepted contributions carry reviews, so removing the
+    // children first (in one transaction) is what lets those be deleted, not
+    // just clean WorkInProgress drafts.
+    return AppDataSource.transaction(async (manager) => {
+      const contribution = await manager.findOne(ContributionEntity, {
+        where: { id },
+        relations: ["reviews", "media"]
+      })
+      if (!contribution) {
+        return { deleted: false, mediaFiles: [] }
+      }
+      // The upload filenames, returned so the caller can unlink them from disk
+      // after commit -- deleting the media rows only removes their metadata.
+      const mediaFiles = contribution.media?.map((m) => m.file) ?? []
+      // The change sets owned by this contribution and its reviews. Their FKs
+      // point at `changesets`, so onDelete: CASCADE never reaches them from
+      // here; capture the ids before the referencing rows go, then delete them
+      // once nothing points at them, so their bodies are not orphaned forever.
+      const changeSetIds = await this.ownedChangeSetIds(manager, id)
+      if (contribution.media?.length) {
+        await manager.remove(contribution.media)
+      }
+      if (contribution.reviews?.length) {
+        await manager.remove(contribution.reviews)
+      }
+      const result = await manager.delete(ContributionEntity, id)
+      const deleted = result.affected ? result.affected > 0 : false
+      if (deleted && changeSetIds.length) {
+        await manager.delete(ChangeSetEntity, In(changeSetIds))
+      }
+      return { deleted, mediaFiles: deleted ? mediaFiles : [] }
+    })
+  }
+
+  // The ids of the change sets a contribution and its reviews own -- the
+  // contribution's own changeSet plus one per review. Read straight from the FK
+  // columns so the change-set bodies need not be loaded just to delete them.
+  private async ownedChangeSetIds(
+    manager: EntityManager,
+    contributionId: string
+  ): Promise<string[]> {
+    const rows: { id: string | null }[] = [
+      ...(await manager.query(
+        "SELECT changeSetId AS id FROM contributions WHERE id = ?",
+        [contributionId]
+      )),
+      ...(await manager.query(
+        "SELECT changeSetId AS id FROM reviews WHERE contributionId = ?",
+        [contributionId]
+      ))
+    ]
+    return rows.map((r) => r.id).filter((id): id is string => id != null)
   }
 
   // Check whether a batch has any contributions assigned.
@@ -1148,20 +1268,27 @@ export class DatabaseService {
     return rows.map((r) => r.id)
   }
 
-  // Delete a publication batch by id.
+  // Delete a publication batch by id, in one of two modes:
   //
-  // Honours what the delete-batch modal promises the editor: a pending batch's
-  // contributions are unassigned (batch -> null) and then the empty batch is
-  // deleted, all in one transaction so a contribution is never left pointing at
-  // a batch that is gone.
+  //  - `deleteContributions = false` (default): unassign the batch's
+  //    contributions (batch -> null) and delete the empty batch. The
+  //    contributions survive, back in the pool. This is what the delete-batch
+  //    modal has always promised.
+  //  - `deleteContributions = true`: delete the batch's contributions as well,
+  //    then the batch. Destructive -- the contributions are gone.
+  //
+  // Both run in one transaction so a contribution is never left pointing at a
+  // batch that is gone.
   //
   // The one case that stays blocked is a *published* batch that still holds
   // contributions: a published batch is the record of what it published (it
-  // carries a `published` date and `publishedBy`), and unassigning its
-  // contributions would corrupt that record. Mirrors the guard in
-  // assignContributionToBatch, which forbids moving work out of a published
-  // batch for the same reason.
-  async deleteBatch(batchId: number): Promise<DeleteBatchResult> {
+  // carries a `published` date and `publishedBy`), and removing its
+  // contributions -- by unassign or delete -- would corrupt that record.
+  // Mirrors the guard in assignContributionToBatch.
+  async deleteBatch(
+    batchId: number,
+    deleteContributions = false
+  ): Promise<DeleteBatchResult> {
     return await AppDataSource.transaction(async (manager) => {
       const batch = await manager.findOne(PublicationBatchEntity, {
         where: { id: batchId }
@@ -1179,16 +1306,71 @@ export class DatabaseService {
           return { deleted: false, reason: "published_with_contributions", batch }
         }
       }
-      // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.
-      await manager
-        .createQueryBuilder()
-        .update(ContributionEntity)
-        .set({ batch: null })
-        .where("batchId = :batchId", { batchId })
-        .execute()
+      let mediaFiles: string[] = []
+      if (deleteContributions) {
+        // Delete the batch's contributions. reviews and media reference the
+        // contribution with no ON DELETE CASCADE, so remove those first. All
+        // set-based (subquery on batchId) so a 7,000-voyage batch is a handful
+        // of statements, not thousands.
+        const inBatch =
+          "contributionId IN (SELECT id FROM contributions WHERE batchId = :batchId)"
+        // Captured before the deletes: the upload filenames (returned so the
+        // caller can unlink them after commit) and the change-set ids owned by
+        // these contributions and their reviews (deleted below, since their FKs
+        // point at `changesets` so cascade never reaches them).
+        const mediaRows: { file: string }[] = await manager.query(
+          "SELECT file FROM contribution_media WHERE contributionId IN " +
+            "(SELECT id FROM contributions WHERE batchId = ?)",
+          [batchId]
+        )
+        mediaFiles = mediaRows.map((r) => r.file).filter((f) => f != null)
+        const changeSetRows: { id: string | null }[] = [
+          ...(await manager.query(
+            "SELECT changeSetId AS id FROM contributions WHERE batchId = ?",
+            [batchId]
+          )),
+          ...(await manager.query(
+            "SELECT changeSetId AS id FROM reviews WHERE " +
+              "contributionId IN (SELECT id FROM contributions WHERE batchId = ?)",
+            [batchId]
+          ))
+        ]
+        const changeSetIds = changeSetRows
+          .map((r) => r.id)
+          .filter((id): id is string => id != null)
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(ContributionMediaEntity)
+          .where(inBatch, { batchId })
+          .execute()
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(ReviewEntity)
+          .where(inBatch, { batchId })
+          .execute()
+        await manager
+          .createQueryBuilder()
+          .delete()
+          .from(ContributionEntity)
+          .where("batchId = :batchId", { batchId })
+          .execute()
+        if (changeSetIds.length) {
+          await manager.delete(ChangeSetEntity, In(changeSetIds))
+        }
+      } else {
+        // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.
+        await manager
+          .createQueryBuilder()
+          .update(ContributionEntity)
+          .set({ batch: null })
+          .where("batchId = :batchId", { batchId })
+          .execute()
+      }
       const result = await manager.delete(PublicationBatchEntity, batchId)
       return (result.affected ?? 0) > 0
-        ? { deleted: true }
+        ? { deleted: true, mediaFiles }
         : { deleted: false, reason: "not_found" }
     })
   }
