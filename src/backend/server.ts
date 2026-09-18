@@ -349,16 +349,26 @@ const getPaginationArgs = (
 
 // Get all contributions with filtering, sorting and pagination
 // A status query parameter, single (`?status=1`) or repeated (`?status=1&status=2`).
+// Each value may be the numeric code (`4`) or the enum name (`Published`), so a
+// client sending `exclude_status=Published` works as documented -- parseInt
+// alone turned the name into NaN, which no IN / NOT IN predicate could match.
+const parseOneStatus = (value: string): ContributionStatus => {
+  const numeric = Number(value)
+  if (Number.isInteger(numeric) && numeric in ContributionStatus) {
+    return numeric as ContributionStatus
+  }
+  const named = ContributionStatus[value as keyof typeof ContributionStatus]
+  return (typeof named === "number" ? named : Number.NaN) as ContributionStatus
+}
 const parseStatusParam = (
   raw: unknown
 ): ContributionStatus | ContributionStatus[] | undefined => {
   if (raw === undefined) {
     return undefined
   }
-  if (Array.isArray(raw)) {
-    return (raw as string[]).map((s) => parseInt(s) as ContributionStatus)
-  }
-  return parseInt(raw as string) as ContributionStatus
+  return Array.isArray(raw)
+    ? (raw as string[]).map(parseOneStatus)
+    : parseOneStatus(raw as string)
 }
 
 app.get("/contributions", authenticateJWT, async (req, res) => {
@@ -556,10 +566,19 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
         .json({ error: "Cannot determine author from token or request" })
       return
     }
+    // Parse status / exclude_status like the editor /contributions route, so
+    // the contributor home shows all of their own work by default (minus any
+    // excluded statuses) and an explicit status still narrows it -- e.g.
+    // exclude_status=Published by default, or status=1 for just Submitted.
+    // Hardcoding WorkInProgress here hid submitted and decided work and made
+    // Published unreachable.
+    const status = parseStatusParam(req.query.status)
+    const excludeStatus = parseStatusParam(req.query.exclude_status)
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author,
-      status: ContributionStatus.WorkInProgress
+      status,
+      excludeStatus
     })
     res.json(contributions)
   } catch (error) {
