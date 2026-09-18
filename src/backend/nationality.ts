@@ -12,9 +12,16 @@ export const extractNationality = (
   if (!ship) {
     return null
   }
-  const name = ship.changes?.find(
+  const linked = ship.changes?.find(
     (s: any) => s?.property === "VoyageShip_nationality_ship_id"
-  )?.changed?.data?.["Nation name"]
+  )
+  // A contributed nationality wins even when it clears it (changed: null); only
+  // an edit that never touches nationality falls back to the ship's current
+  // "National carrier", so a partial edit keeps its sort value instead of
+  // clearing the denormalised column.
+  const name = linked
+    ? linked.changed?.data?.["Nation name"]
+    : ship.ownedEntity?.data?.["National carrier"]?.data?.["Nation name"]
   const trimmed = name == null ? "" : String(name).trim()
   return trimmed === "" ? null : trimmed
 }
