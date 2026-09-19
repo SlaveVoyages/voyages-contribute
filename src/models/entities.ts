@@ -1630,7 +1630,13 @@ export const VoyageSourceTypeSchema = mkBuilder({
 export const VoyageShortRefSchema = mkBuilder({
   name: "Voyage Source Short Reference",
   backingTable: "document_shortref",
-  contributionMode: "ReadOnly",
+  // Contributable (not ReadOnly) so an editor can create a new short reference
+  // from the source form, not only pick an existing one (DD-0551). It is a
+  // standalone catalogue entry shared across sources -- like Enslaved/Enslaver,
+  // "Full" -- referenced by document_source.short_ref_id. `document_shortref`
+  // needs only a unique `name` (transkribus_docId is nullable), which is the one
+  // field below.
+  contributionMode: "Full",
   pkField: "id",
   // `Name`, not `name`: an entity's data is keyed by property *label*, and the
   // property below is labelled "Name". Reading the backing field name instead
@@ -1694,7 +1700,10 @@ export const VoyageSourceSchema = mkBuilder({
     label: "Short reference",
     backingField: "short_ref_id",
     linkedEntitySchema: VoyageShortRefSchema,
-    mode: EntityLinkEditMode.Select,
+    // Create, not Select: an editor can pick an existing short reference or add
+    // a new one inline when none fits (DD-0551). Previously Select-only, which
+    // left a source with no valid short reference and no way to supply one.
+    mode: EntityLinkEditMode.Create,
     notNull: true,
     accessLevel: PropertyAccessLevel.Editor
   })

@@ -129,6 +129,63 @@ test("sorting by voyage id orders numerically, not as text", async () => {
   ])
 })
 
+test("excludeStatus leaves out those statuses; an explicit status wins", async () => {
+  const probes: { id: string; status: number }[] = [
+    { id: "flt-wip", status: ContributionStatus.WorkInProgress },
+    { id: "flt-sub", status: ContributionStatus.Submitted },
+    { id: "flt-acc", status: ContributionStatus.Accepted },
+    { id: "flt-pub1", status: ContributionStatus.Published },
+    { id: "flt-pub2", status: ContributionStatus.Published }
+  ]
+  for (const { id, status } of probes) {
+    const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+      author: "tester",
+      title: "t",
+      comments: "",
+      timestamp: 0,
+      changes: []
+    })
+    const contribution = AppDataSource.manager.create(ContributionEntity, {
+      id,
+      root: { type: "existing", schema: "FilterProbe", id: 1 },
+      changeSet,
+      status
+    })
+    await AppDataSource.manager.save(contribution)
+  }
+
+  const ids = async (options: object): Promise<string[]> =>
+    (
+      await service.listContributions({
+        rootSchema: "FilterProbe",
+        limit: 100,
+        ...options
+      })
+    ).data
+      .map((c) => c.id)
+      .sort()
+
+  // Single value: everything except Published (the editorial default).
+  expect(await ids({ excludeStatus: ContributionStatus.Published })).toEqual([
+    "flt-acc",
+    "flt-sub",
+    "flt-wip"
+  ])
+  // Array: exclude several at once.
+  expect(
+    await ids({
+      excludeStatus: [ContributionStatus.Published, ContributionStatus.Accepted]
+    })
+  ).toEqual(["flt-sub", "flt-wip"])
+  // An explicit status wins over excludeStatus (Published is still reachable).
+  expect(
+    await ids({
+      status: ContributionStatus.Published,
+      excludeStatus: ContributionStatus.Published
+    })
+  ).toEqual(["flt-pub1", "flt-pub2"])
+})
+
 test("an author is found by address, whatever name is recorded beside it", async () => {
   const { authorIdentity } = await import("../src/backend/authz")
 
@@ -174,7 +231,7 @@ test("an author is found by address, whatever name is recorded beside it", async
       root: { type: "existing", schema: "Voyage", id: 900000 + index },
       changeSet,
       status: ContributionStatus.WorkInProgress
-    } as ContributionEntity)
+    })
   }
 
   const mine = await service.listContributions({

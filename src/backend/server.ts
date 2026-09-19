@@ -111,11 +111,6 @@ const ensureUploadDir = async () => {
   }
 }
 
-// Unlink uploaded files whose media rows were just deleted. Deleting a
-// contribution or a batch removes only the media metadata; the files under
-// uploadDir would otherwise be orphaned on disk with no row left to find them
-// by. Called after the delete commits, and never lets a missing file fail the
-// request -- mirrors the single /media/:mediaId deletion path.
 const unlinkMediaFiles = async (files: string[]): Promise<void> => {
   for (const file of files) {
     const filePath = path.join(uploadDir, file)
@@ -353,6 +348,29 @@ const getPaginationArgs = (
 }
 
 // Get all contributions with filtering, sorting and pagination
+// A status query parameter, single (`?status=1`) or repeated (`?status=1&status=2`).
+// Each value may be the numeric code (`4`) or the enum name (`Published`), so a
+// client sending `exclude_status=Published` works as documented -- parseInt
+// alone turned the name into NaN, which no IN / NOT IN predicate could match.
+const parseOneStatus = (value: string): ContributionStatus => {
+  const numeric = Number(value)
+  if (Number.isInteger(numeric) && numeric in ContributionStatus) {
+    return numeric as ContributionStatus
+  }
+  const named = ContributionStatus[value as keyof typeof ContributionStatus]
+  return (typeof named === "number" ? named : Number.NaN) as ContributionStatus
+}
+const parseStatusParam = (
+  raw: unknown
+): ContributionStatus | ContributionStatus[] | undefined => {
+  if (raw === undefined) {
+    return undefined
+  }
+  return Array.isArray(raw)
+    ? (raw as string[]).map(parseOneStatus)
+    : parseOneStatus(raw as string)
+}
+
 app.get("/contributions", authenticateJWT, async (req, res) => {
   try {
     // Parse query parameters
@@ -364,20 +382,12 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
           : null
         : undefined
 
-    // Parse status filter (can be single value or array)
-    let status: ContributionStatus | ContributionStatus[] | undefined =
-      undefined
-    if (req.query.status !== undefined) {
-      if (Array.isArray(req.query.status)) {
-        // Multiple status values
-        status = (req.query.status as string[]).map(
-          (s) => parseInt(s) as ContributionStatus
-        )
-      } else {
-        // Single status value
-        status = parseInt(req.query.status as string) as ContributionStatus
-      }
-    }
+    // Parse status / exclude_status filters (each a single value or an array).
+    const status = parseStatusParam(req.query.status)
+    // Statuses to leave out when no explicit status is asked for. The lists send
+    // `exclude_status=Published` so their default view is not swamped by the
+    // published rows, which are the bulk of the table.
+    const excludeStatus = parseStatusParam(req.query.exclude_status)
 
     // Lets a client ask whether one entity already has a contribution, rather
     // than paging the whole table to find out. The schema narrows it, since
@@ -472,6 +482,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
         allowSensitiveSort: canReadSensitive
       }),
       status,
+      excludeStatus,
       batchId,
       rootId,
       rootSchema,
@@ -555,23 +566,19 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
         .json({ error: "Cannot determine author from token or request" })
       return
     }
-    // The contributor's own contributions. Historically this was WorkInProgress
-    // only; it now returns every status so submitted (and decided) work shows on
-    // the Contribute home too. An optional ?status filter narrows it (single
-    // value or repeated for several), matching the editor /contributions route.
-    let status: ContributionStatus | ContributionStatus[] | undefined =
-      undefined
-    if (req.query.status !== undefined) {
-      status = Array.isArray(req.query.status)
-        ? (req.query.status as string[]).map(
-            (s) => parseInt(s) as ContributionStatus
-          )
-        : (parseInt(req.query.status as string) as ContributionStatus)
-    }
+    // Parse status / exclude_status like the editor /contributions route, so
+    // the contributor home shows all of their own work by default (minus any
+    // excluded statuses) and an explicit status still narrows it -- e.g.
+    // exclude_status=Published by default, or status=1 for just Submitted.
+    // Hardcoding WorkInProgress here hid submitted and decided work and made
+    // Published unreachable.
+    const status = parseStatusParam(req.query.status)
+    const excludeStatus = parseStatusParam(req.query.exclude_status)
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author,
-      status
+      status,
+      excludeStatus
     })
     res.json(contributions)
   } catch (error) {

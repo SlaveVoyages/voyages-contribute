@@ -14,6 +14,7 @@ import {
   DataSource,
   Repository,
   In,
+  Not,
   EntityManager,
   IsNull,
   Raw,
@@ -529,6 +530,12 @@ export class DatabaseService {
       page?: number
       limit?: number
       status?: ContributionStatus | ContributionStatus[]
+      /**
+       * Statuses to exclude. Applied only when `status` is not given, so the
+       * editorial list can default to "everything except Published" -- the
+       * published rows are the bulk of the table and swamp the list otherwise.
+       */
+      excludeStatus?: ContributionStatus | ContributionStatus[]
       batchId?: number | null
       author?: string
       /** Id of the root entity, e.g. a voyage id. */
@@ -575,6 +582,7 @@ export class DatabaseService {
     const {
       page = 1,
       status,
+      excludeStatus,
       batchId,
       author,
       rootId,
@@ -595,6 +603,13 @@ export class DatabaseService {
       } else {
         where.status = status
       }
+    } else if (excludeStatus !== undefined) {
+      // No explicit status, but some to leave out (e.g. Published): everything
+      // else. `Not(In(...))` reads off the status index like `In` does.
+      const excluded = Array.isArray(excludeStatus)
+        ? excludeStatus
+        : [excludeStatus]
+      where.status = Not(In(excluded))
     }
 
     if (batchId !== undefined) {
