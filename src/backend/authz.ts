@@ -35,35 +35,6 @@ export const hasEditorRole = (
   return false
 }
 
-/**
- * The identity inside a recorded author, which is what authorization compares.
- *
- * An author reads `Name <address>`, where the address is the part a token
- * verified and the name is only there to be read. It has to close the string,
- * so a display name containing brackets cannot pass itself off as the address
- * — and so this agrees with the SQL that filters on the same rule, which can
- * only anchor at the end. An account with no name to show records the bare
- * address, which is taken whole.
- *
- * What is recorded is taken as it stands, never case-folded. An address is
- * lowered once, where the token is read, so every author this code writes
- * already holds the form it will be compared against, and this comparison and
- * the SQL one agree on all of them.
- *
- * They would not agree on an address stored in some other case: SQL folds by
- * collation — sqlite's LIKE is ASCII-insensitive, MySQL's depends on the
- * column — and JavaScript folds by Unicode, so no spelling of this reconciles
- * them for every input. Nothing writes such a row today. Making that
- * structural rather than incidental means an identity column of its own,
- * which is also what the queries want in order to be indexable.
- */
-export const AUTHOR_IDENTITY_PATTERN = /<([^<>]*)>$/
-
-export const authorIdentity = (author: string): string => {
-  const match = AUTHOR_IDENTITY_PATTERN.exec(author)
-  return (match ? match[1] : author).trim()
-}
-
 export type StatusChangeVerdict =
   | { kind: "apply" }
   | { kind: "noop" }

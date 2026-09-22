@@ -17,8 +17,15 @@ process.env.CONTRIB_DB_PATH = join(
   "test.db"
 )
 
-const { AppDataSource, DatabaseService, ChangeSetEntity, ContributionEntity } =
-  await import("../src/backend/db")
+const {
+  AppDataSource,
+  DatabaseService,
+  ChangeSetEntity,
+  ContributionEntity,
+  ContributionMediaEntity,
+  PublicationBatchEntity,
+  ReviewEntity
+} = await import("../src/backend/db")
 const { ContributionStatus } = await import("../src/models/contribution")
 
 /** The key orders EntityRef is built in across the codebase, plus id types. */
@@ -186,41 +193,24 @@ test("excludeStatus leaves out those statuses; an explicit status wins", async (
   ).toEqual(["flt-pub1", "flt-pub2"])
 })
 
-test("an author is found by address, whatever name is recorded beside it", async () => {
-  const { authorIdentity } = await import("../src/backend/authz")
-
-  // The address is the identity; the name is only there to be read. The last
-  // bracketed group wins, so a name cannot pass itself off as the address.
-  expect(authorIdentity("Jane Doe <j@x.com>")).toBe("j@x.com")
-  expect(authorIdentity("j@x.com")).toBe("j@x.com")
-  // Taken as recorded, never case-folded: an address is lowered once, where
-  // the token is read, so recorded values arrive already in the form they are
-  // compared against.
-  expect(authorIdentity("  J@X.com  ")).toBe("J@X.com")
-  expect(authorIdentity("Evil <victim@x.com> <attacker@x.com>")).toBe(
-    "attacker@x.com"
-  )
-  // The address has to close the string, because the SQL that filters on the
-  // same rule can only anchor at the end. Were this to accept a trailing
-  // suffix, a row would pass the per-row ownership check while never appearing
-  // in the list it was fetched from.
-  expect(authorIdentity("Jane <j@x.com> (bot)")).toBe("Jane <j@x.com> (bot)")
-
-  // Three records for one person: one from before they had a name to show,
-  // one after, and one after they corrected it. All three are theirs.
-  const stored = [
-    "j@x.com",
-    "Jane Doe <j@x.com>",
-    "Jane Q. Doe <j@x.com>",
-    "Someone Else <other@x.com>",
-    // An address in some other case, which nothing here writes: an address is
-    // lowered where the token is read. Recorded values are compared as they
-    // stand, so this one belongs to nobody.
-    "José Álvarez <JOSÉ@x.com>"
+test("an author owns their work by the email recorded with it, whatever name sits beside it", async () => {
+  // One person's records: before they had a name to show, after, and after
+  // they corrected it. The name is only there to be read.
+  const stored: { author: string; authorEmail: string | null }[] = [
+    { author: "j@x.com", authorEmail: "j@x.com" },
+    { author: "Jane Doe", authorEmail: "j@x.com" },
+    { author: "Jane Q. Doe", authorEmail: "j@x.com" },
+    { author: "Someone Else", authorEmail: "other@x.com" },
+    // A name that reads like somebody else's address: only the recorded email
+    // is compared, so it owns nothing of theirs.
+    { author: "Evil <j@x.com>", authorEmail: "evil@x.com" },
+    // Work no token stands behind, e.g. an import.
+    { author: "CSV importer script", authorEmail: null }
   ]
-  for (const [index, authorValue] of stored.entries()) {
+  for (const [index, { author, authorEmail }] of stored.entries()) {
     const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-      author: authorValue,
+      author,
+      authorEmail,
       title: "t",
       comments: "",
       timestamp: 0,
@@ -234,37 +224,114 @@ test("an author is found by address, whatever name is recorded beside it", async
     })
   }
 
-  const mine = await service.listContributions({
-    author: "Jane Q. Doe <j@x.com>",
-    limit: 100
-  })
-  expect(mine.data.map((c) => c.id).sort()).toEqual([
+  const authored = async (author: string): Promise<string[]> =>
+    (await service.listContributions({ author, limit: 100 })).data
+      .map((c) => c.id)
+      .sort()
+
+  expect(await authored("j@x.com")).toEqual([
     "author-0",
     "author-1",
     "author-2"
   ])
+  expect(await authored("other@x.com")).toEqual(["author-3"])
+  expect(await authored("evil@x.com")).toEqual(["author-4"])
 
-  // Someone else's work stays theirs, and a wildcard does not collect it.
-  const theirs = await service.listContributions({
-    author: "other@x.com",
-    limit: 100
-  })
-  expect(theirs.data.map((c) => c.id)).toEqual(["author-3"])
+  // Matched whole: a wildcard collects nothing, and neither does a display
+  // name or a fragment of an address.
+  expect(await authored("%")).toEqual([])
+  expect(await authored("CSV importer script")).toEqual([])
+  expect(await authored("Jane Doe")).toEqual([])
+  expect(await authored("x.com")).toEqual([])
+})
 
-  // A token carrying JOSÉ@x.com presents it as josé@x.com, which owns nothing
-  // here. Both halves of the rule agree on that, as they do on every address
-  // this code records — the case where they could not is the one nothing
-  // writes.
-  const asToken = "josé@x.com"
-  expect(authorIdentity("José Álvarez <JOSÉ@x.com>")).not.toBe(asToken)
-  const accented = await service.listContributions({
-    author: asToken,
-    limit: 100
+test("deleting a contribution, or a batch holding contributions, takes their change sets with it", async () => {
+  const changeSetsFor = async (ids: string[]): Promise<number> => {
+    if (ids.length === 0) {
+      return 0
+    }
+    const placeholders = ids.map(() => "?").join(", ")
+    const [{ n }] = await AppDataSource.query(
+      `SELECT COUNT(*) AS n FROM changesets WHERE id IN (${placeholders})`,
+      ids
+    )
+    return Number(n)
+  }
+
+  // A contribution with a review and a media item: every row that points at it
+  // has to go before it can, and every change set it owns goes with it.
+  const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+    author: "Deleter",
+    authorEmail: "deleter@x.com",
+    title: "t",
+    comments: "",
+    timestamp: 0,
+    changes: []
   })
-  expect(accented.data.map((c) => c.id)).toEqual([])
-  expect(
-    (await service.listContributions({ author: "%", limit: 100 })).data
-  ).toEqual([])
+  const reviewChangeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+    author: "Reviewer",
+    authorEmail: "reviewer@x.com",
+    title: "r",
+    comments: "",
+    timestamp: 0,
+    changes: []
+  })
+  const contribution = await AppDataSource.manager.save(
+    AppDataSource.manager.create(ContributionEntity, {
+      id: "del-1",
+      root: { type: "existing", schema: "Voyage", id: 910001 },
+      changeSet,
+      status: ContributionStatus.WorkInProgress
+    })
+  )
+  await AppDataSource.manager.save(ReviewEntity, {
+    stackOrder: 1,
+    changeSet: reviewChangeSet,
+    contribution
+  })
+  await AppDataSource.manager.save(ContributionMediaEntity, {
+    type: "image",
+    file: "del-1.png",
+    name: "shot",
+    comments: "",
+    contribution
+  })
+
+  expect(await service.deleteContribution("del-1")).toEqual({
+    deleted: true,
+    mediaFiles: ["del-1.png"]
+  })
+  expect(await service.getContribution("del-1")).toBeNull()
+  expect(await changeSetsFor([changeSet.id, reviewChangeSet.id])).toBe(0)
+
+  // The same for a batch deleted with the contributions it holds.
+  const batch = await AppDataSource.manager.save(PublicationBatchEntity, {
+    title: "batch to delete",
+    comments: ""
+  })
+  const batchedChangeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+    author: "Deleter",
+    authorEmail: "deleter@x.com",
+    title: "t",
+    comments: "",
+    timestamp: 0,
+    changes: []
+  })
+  await AppDataSource.manager.save(
+    AppDataSource.manager.create(ContributionEntity, {
+      id: "del-2",
+      root: { type: "existing", schema: "Voyage", id: 910002 },
+      changeSet: batchedChangeSet,
+      batch,
+      status: ContributionStatus.Accepted
+    })
+  )
+
+  expect(await service.deleteBatch(batch.id, true)).toMatchObject({
+    deleted: true
+  })
+  expect(await service.getContribution("del-2")).toBeNull()
+  expect(await changeSetsFor([batchedChangeSet.id])).toBe(0)
 })
 
 test("a root names one entity and nothing else", async () => {

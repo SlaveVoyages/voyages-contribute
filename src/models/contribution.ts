@@ -4,7 +4,10 @@ import { MaterializedEntity } from "./materialization"
 
 export interface ChangeSet {
   id: string
+  /** The name to show beside the contribution. */
   author: string
+  /** The author's address, which is what ownership compares. */
+  authorEmail?: string | null
   title: string
   comments: string
   timestamp: number

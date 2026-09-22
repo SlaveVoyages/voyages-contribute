@@ -1,5 +1,5 @@
 import { Contribution, ContributionStatus } from "../models/contribution"
-import { authorIdentity, decideStatusChange } from "./authz"
+import { decideStatusChange } from "./authz"
 import { checkSubmissionReadiness } from "./submissionReadiness"
 
 /**
@@ -81,9 +81,7 @@ export const changeOneStatus = async <C extends Contribution>(
 
   const verdict = decideStatusChange({
     isEditor,
-    isAuthor:
-      !!identity &&
-      authorIdentity(existing.changeSet?.author ?? "") === identity,
+    isAuthor: !!identity && existing.changeSet?.authorEmail === identity,
     from: existing.status,
     to,
     commentSupplied

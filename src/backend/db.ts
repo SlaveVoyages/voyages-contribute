@@ -18,7 +18,6 @@ import {
   EntityManager,
   FindManyOptions,
   IsNull,
-  Raw,
   Brackets,
   Between,
   MoreThanOrEqual,
@@ -27,7 +26,6 @@ import {
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
-import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import { extractNationality } from "./nationality"
 import { extractShipName } from "./shipName"
@@ -67,8 +65,15 @@ export class ChangeSetEntity implements ChangeSet {
   @PrimaryGeneratedColumn("uuid")
   id!: string
 
+  // The name to show beside the contribution, which its account holder edits.
   @Column({ type: "varchar" })
   author!: string
+
+  // The address the token carried, lowercased. Ownership and the author filter
+  // compare this, whole. Null where no token stood behind the write.
+  @Index("IDX_changesets_authorEmail")
+  @Column({ type: "varchar", nullable: true })
+  authorEmail!: string | null
 
   @Column({ type: "varchar" })
   title!: string
@@ -531,6 +536,7 @@ export class DatabaseService {
        */
       excludeStatus?: ContributionStatus | ContributionStatus[]
       batchId?: number | null
+      /** The author's address, matched whole. */
       author?: string
       /** Id of the root entity, e.g. a voyage id. */
       rootId?: string | number
@@ -550,15 +556,15 @@ export class DatabaseService {
       sortOrder?: "ASC" | "DESC"
       /**
        * Free-text search. Case-insensitive OR match across the contribution id,
-       * the root voyage id, and (subject to visibility) the changeSet author /
-       * title / comments.
+       * the root voyage id, and (subject to visibility) the changeSet author,
+       * address, title and comments.
        */
       search?: string
       /**
-       * Who may be matched on the sensitive changeSet fields (author, title,
-       * comments). "all" for an editor -- every row. For a contributor, only
-       * their own rows, named by identity, so a text search cannot probe the
-       * redacted content of other people's contributions. The public fields
+       * Who may be matched on the sensitive changeSet fields (author, address,
+       * title, comments). "all" for an editor -- every row. For a contributor,
+       * only their own rows, named by address, so a text search cannot probe
+       * the redacted content of other people's contributions. The public fields
        * (contribution id, voyage id) are always searchable by anyone.
        */
       searchSensitiveScope?: "all" | { ownIdentity: string | null }
@@ -616,11 +622,8 @@ export class DatabaseService {
       }
     }
 
-    // An author reads `Name <address>`, and the name is editable, so matching
-    // the whole string would hide a contributor's own work from them the first
-    // time they corrected their profile. Only the address is matched, either
-    // closing the string or standing alone, which is what an account with no
-    // name to show records.
+    // The address is matched whole, off its index. The name beside it is the
+    // account holder's to edit, so it says nothing about whose work this is.
     //
     // No case folding here, deliberately: an address is lowered once, where
     // the token is read, so both sides of this are already in the same form
@@ -631,16 +634,7 @@ export class DatabaseService {
     // into one nested clause -- a where holds a single condition per relation.
     const changeSetWhere: any = {}
     if (author) {
-      const identity = authorIdentity(author)
-      changeSetWhere.author = Raw(
-        (column) =>
-          `(${column} = :authorIdentity` +
-          ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
-        {
-          authorIdentity: identity,
-          authorSuffix: `%<${likeLiteral(identity)}>`
-        }
-      )
+      changeSetWhere.authorEmail = author
     }
     // Date range on the changeSet timestamp -- the same value the Date column
     // shows and `sortBy: "timestamp"` orders by. Open-ended on either side.
@@ -699,6 +693,7 @@ export class DatabaseService {
         // value in the change tree, and its property keys too.
         const sensitive =
           `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+          ` OR cs.authorEmail LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
           ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
           ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
           ` OR cs.changes LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
@@ -708,16 +703,10 @@ export class DatabaseService {
             { searchTerm: term }
           )
         } else if (searchSensitiveScope.ownIdentity) {
-          const own = searchSensitiveScope.ownIdentity
           b.orWhere(
             "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
-              `(cs.author = :searchOwn OR cs.author LIKE :searchOwnSuffix ESCAPE '${LIKE_ESCAPE}')` +
-              ` AND (${sensitive}))`,
-            {
-              searchTerm: term,
-              searchOwn: own,
-              searchOwnSuffix: `%<${likeLiteral(own)}>`
-            }
+              `cs.authorEmail = :searchOwn AND (${sensitive}))`,
+            { searchTerm: term, searchOwn: searchSensitiveScope.ownIdentity }
           )
         }
         // No identity: only the public fields above.
@@ -866,6 +855,7 @@ export class DatabaseService {
     contributionId: string,
     reviewChangeSetData: {
       author: string
+      authorEmail: string | null
       title: string
       comments: string
       timestamp: number
@@ -893,6 +883,7 @@ export class DatabaseService {
       // 3. Create the ChangeSet for the review
       const changeSetEntity = new ChangeSetEntity()
       changeSetEntity.author = reviewChangeSetData.author
+      changeSetEntity.authorEmail = reviewChangeSetData.authorEmail
       changeSetEntity.title = reviewChangeSetData.title
       changeSetEntity.comments = reviewChangeSetData.comments
       changeSetEntity.timestamp = reviewChangeSetData.timestamp
@@ -1163,7 +1154,7 @@ export class DatabaseService {
       const result = await manager.delete(ContributionEntity, id)
       const deleted = result.affected ? result.affected > 0 : false
       if (deleted && changeSetIds.length) {
-        await manager.delete(ChangeSetEntity, In(changeSetIds))
+        await manager.delete(ChangeSetEntity, changeSetIds)
       }
       return { deleted, mediaFiles: deleted ? mediaFiles : [] }
     })
@@ -1335,7 +1326,7 @@ export class DatabaseService {
           .where("batchId = :batchId", { batchId })
           .execute()
         if (changeSetIds.length) {
-          await manager.delete(ChangeSetEntity, In(changeSetIds))
+          await manager.delete(ChangeSetEntity, changeSetIds)
         }
       } else {
         // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.

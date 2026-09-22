@@ -73,6 +73,7 @@ for (const {
 } of rows) {
   const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
     author,
+    authorEmail: author,
     title,
     comments,
     timestamp,

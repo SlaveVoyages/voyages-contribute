@@ -3,7 +3,7 @@ import { mkdtempSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { PublishedAsEpochMillis1786300000000 } from "../src/backend/migrations/1786300000000-PublishedAsEpochMillis"
-import { ChangeSetTimestampIndex1786700000000 } from "../src/backend/migrations/1786700000000-ChangeSetTimestampIndex"
+import { AllMigrations } from "../src/backend/migrations/1786100000000-InitialSchema"
 
 /**
  * That the migrations produce the schema the entities are declared against.
@@ -62,25 +62,82 @@ test("a publication date is stored as a number, and can be rolled back", async (
   }
 })
 
-test("the changeset timestamp index is created, rolled back, and re-created, each at most once", async () => {
+test("the changeset author email is split out of the author, indexed, and folded back on rollback", async () => {
   await AppDataSource.runMigrations({ transaction: "all" })
-  const timestampIndexes = async () =>
+  const migration = AllMigrations.map((m) => new m()).find(
+    (m) => (m as { name?: string }).name === "ChangeSetAuthorEmailAndTimestampIndex1786700000000"
+  )!
+  const indexes = async (): Promise<string[]> =>
     (await AppDataSource.query("PRAGMA index_list(changesets)"))
       .map((index: { name: string }) => index.name)
-      .filter((name: string) => name === "IDX_changesets_timestamp")
+      .filter((name: string) => name.startsWith("IDX_changesets_"))
+      .sort()
+  const authors = async (): Promise<Record<string, string>> =>
+    Object.fromEntries(
+      (
+        await AppDataSource.query(
+          "SELECT id, author, authorEmail FROM changesets WHERE id LIKE 'legacy-%' ORDER BY id"
+        )
+      ).map((row: { id: string; author: string; authorEmail: string | null }) => [
+        row.id,
+        `${row.author} | ${row.authorEmail ?? "(none)"}`
+      ])
+    )
 
-  expect(await timestampIndexes()).toHaveLength(1)
+  expect(await indexes()).toEqual([
+    "IDX_changesets_authorEmail",
+    "IDX_changesets_timestamp"
+  ])
 
-  const migration = new ChangeSetTimestampIndex1786700000000()
   const runner = AppDataSource.createQueryRunner()
   try {
     await migration.down(runner)
-    await migration.down(runner)
-    expect(await timestampIndexes()).toHaveLength(0)
+    expect(await indexes()).toEqual([])
+
+    // The shapes an author was recorded in before it held a name alone.
+    const legacy: [string, string][] = [
+      ["legacy-name", "Jane Doe <j@x.com>"],
+      ["legacy-bare", "k@x.com"],
+      ["legacy-none", "Local Dev"],
+      ["legacy-subject", "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84>"]
+    ]
+    for (const [id, author] of legacy) {
+      await AppDataSource.query(
+        "INSERT INTO changesets (id, author, title, comments, timestamp, changes) VALUES (?, ?, 't', '', 0, '[]')",
+        [id, author]
+      )
+    }
 
     await migration.up(runner)
     await migration.up(runner)
-    expect(await timestampIndexes()).toHaveLength(1)
+    expect(await indexes()).toEqual([
+      "IDX_changesets_authorEmail",
+      "IDX_changesets_timestamp"
+    ])
+    expect(await authors()).toEqual({
+      // The name stays to be read; the address becomes the identity.
+      "legacy-name": "Jane Doe | j@x.com",
+      // An account with no name to show recorded the address alone.
+      "legacy-bare": "k@x.com | k@x.com",
+      // Neither of these holds an address, so no identity comes out of them.
+      "legacy-none": "Local Dev | (none)",
+      "legacy-subject":
+        "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84> | (none)"
+    })
+
+    await migration.down(runner)
+    await migration.down(runner)
+    expect(
+      Object.fromEntries(
+        (
+          await AppDataSource.query(
+            "SELECT id, author FROM changesets WHERE id LIKE 'legacy-%' ORDER BY id"
+          )
+        ).map((row: { id: string; author: string }) => [row.id, row.author])
+      )
+    ).toEqual(Object.fromEntries(legacy))
+
+    await migration.up(runner)
   } finally {
     await runner.release()
   }

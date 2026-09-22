@@ -31,7 +31,8 @@ await AppDataSource.runMigrations({ transaction: "all" })
 // joined to them returns more rows than there are contributions.
 for (const [index, id] of ["count-a", "count-b", "count-c"].entries()) {
   const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-    author: "alice@x.com",
+    author: "Alice",
+    authorEmail: "alice@x.com",
     title: `title ${id}`,
     comments: `comments ${id}`,
     timestamp: 1000 * (index + 1),
@@ -48,7 +49,8 @@ for (const [index, id] of ["count-a", "count-b", "count-c"].entries()) {
       const reviewChangeSet = await AppDataSource.manager.save(
         ChangeSetEntity,
         {
-          author: "editor@x.com",
+          author: "Editor",
+          authorEmail: "editor@x.com",
           title: "review",
           comments: "review",
           timestamp: 5000 + stackOrder,
@@ -159,7 +161,7 @@ test("the listing total counts contributions, and each row carries its relations
 
     const reviewed = result.data.find((c) => c.id === "count-a")
     expect(reviewed?.changeSet.title).toBe("title count-a")
-    expect(reviewed?.reviews.map((r) => r.changeSet.author)).toEqual([
+    expect(reviewed?.reviews.map((r) => r.changeSet.authorEmail)).toEqual([
       "editor@x.com",
       "editor@x.com"
     ])
