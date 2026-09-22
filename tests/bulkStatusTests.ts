@@ -70,6 +70,7 @@ const storeOf = (contributions: Contribution[]) => {
 const asEditor = {
   isEditor: true,
   identity: EDITOR,
+  authorEmail: EDITOR,
   commentSupplied: false
 }
 
@@ -124,6 +125,7 @@ test("bulk cannot reach a status the single decision would refuse", async () => 
       to: Accepted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     deps
@@ -137,6 +139,7 @@ test("bulk cannot reach a status the single decision would refuse", async () => 
       to: Submitted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     deps
@@ -227,6 +230,7 @@ test("bulk submission and bulk acceptance are held to different things", async (
       to: Submitted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     storeOf([withoutDataset]).deps
@@ -256,6 +260,7 @@ test("the complete fixture is one a submission would accept", async () => {
       to: Submitted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     deps
@@ -267,7 +272,7 @@ test("the complete fixture is one a submission would accept", async () => {
 test("rejecting reports the same shape as accepting", async () => {
   const { deps } = storeOf([draft("a", Submitted), draft("b", Submitted)])
   const outcome = await changeOneStatus(
-    { id: "a", to: Rejected, isEditor: true, identity: EDITOR },
+    { id: "a", to: Rejected, isEditor: true, identity: EDITOR, authorEmail: EDITOR },
     deps
   )
   expect(outcome.kind).toBe("changed")

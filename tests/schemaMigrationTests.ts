@@ -94,12 +94,16 @@ test("the changeset author email is split out of the author, indexed, and folded
     await migration.down(runner)
     expect(await indexes()).toEqual([])
 
-    // The shapes an author was recorded in before it held a name alone.
+    // Author values with and without an embedded address.
     const legacy: [string, string][] = [
       ["legacy-name", "Jane Doe <j@x.com>"],
       ["legacy-bare", "k@x.com"],
       ["legacy-none", "Local Dev"],
-      ["legacy-subject", "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84>"]
+      ["legacy-subject", "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84>"],
+      // Addresses are lowercased where a token is read, so a value recorded in
+      // another case has to arrive in that same form to be matched against.
+      ["legacy-upper", "Jane Doe <J@X.com>"],
+      ["legacy-padded", "  K@X.com  "]
     ]
     for (const [id, author] of legacy) {
       await AppDataSource.query(
@@ -115,14 +119,15 @@ test("the changeset author email is split out of the author, indexed, and folded
       "IDX_changesets_timestamp"
     ])
     expect(await authors()).toEqual({
-      // The name stays to be read; the address becomes the identity.
       "legacy-name": "Jane Doe | j@x.com",
-      // An account with no name to show recorded the address alone.
+      // An author value that is just an address.
       "legacy-bare": "k@x.com | k@x.com",
-      // Neither of these holds an address, so no identity comes out of them.
+      // Neither of these holds an address, so none comes out of them.
       "legacy-none": "Local Dev | (none)",
       "legacy-subject":
-        "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84> | (none)"
+        "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84> | (none)",
+      "legacy-upper": "Jane Doe | j@x.com",
+      "legacy-padded": "k@x.com | k@x.com"
     })
 
     await migration.down(runner)
@@ -135,7 +140,12 @@ test("the changeset author email is split out of the author, indexed, and folded
           )
         ).map((row: { id: string; author: string }) => [row.id, row.author])
       )
-    ).toEqual(Object.fromEntries(legacy))
+    ).toEqual({
+      ...Object.fromEntries(legacy),
+      // A value the split normalised comes back in the normalised form.
+      "legacy-upper": "Jane Doe <j@x.com>",
+      "legacy-padded": "k@x.com"
+    })
 
     await migration.up(runner)
   } finally {

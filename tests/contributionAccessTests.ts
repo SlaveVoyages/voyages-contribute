@@ -195,7 +195,7 @@ test("excludeStatus leaves out those statuses; an explicit status wins", async (
 
 test("an author owns their work by the email recorded with it, whatever name sits beside it", async () => {
   // One person's records: before they had a name to show, after, and after
-  // they corrected it. The name is only there to be read.
+  // they corrected it.
   const stored: { author: string; authorEmail: string | null }[] = [
     { author: "j@x.com", authorEmail: "j@x.com" },
     { author: "Jane Doe", authorEmail: "j@x.com" },
@@ -258,8 +258,8 @@ test("deleting a contribution, or a batch holding contributions, takes their cha
     return Number(n)
   }
 
-  // A contribution with a review and a media item: every row that points at it
-  // has to go before it can, and every change set it owns goes with it.
+  // A contribution with a review and a media item: the rows referencing it
+  // have to go first, and every change set it owns goes with it.
   const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
     author: "Deleter",
     authorEmail: "deleter@x.com",

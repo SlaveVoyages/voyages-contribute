@@ -25,6 +25,7 @@ export const approveBatchInChunks = async <C extends Contribution>(
     ids,
     isEditor,
     identity,
+    authorEmail,
     chunkSize = BULK_STATUS_LIMIT,
     onChunkProcessed,
     filterEligible
@@ -32,6 +33,7 @@ export const approveBatchInChunks = async <C extends Contribution>(
     ids: string[]
     isEditor: boolean
     identity: string | null
+    authorEmail: string | null
     chunkSize?: number
     onChunkProcessed?: (processedInChunk: number) => void
    // Optional per-chunk revalidation.  Guards against membership/state moving under a long job.
@@ -57,7 +59,8 @@ export const approveBatchInChunks = async <C extends Contribution>(
           to: ContributionStatus.Accepted,
           commentSupplied: false,
           isEditor,
-          identity
+          identity,
+          authorEmail
         },
         deps
       )

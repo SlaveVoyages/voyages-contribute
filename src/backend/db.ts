@@ -65,12 +65,11 @@ export class ChangeSetEntity implements ChangeSet {
   @PrimaryGeneratedColumn("uuid")
   id!: string
 
-  // The name to show beside the contribution, which its account holder edits.
+  // The display name recorded with the change set.
   @Column({ type: "varchar" })
   author!: string
 
-  // The address the token carried, lowercased. Ownership and the author filter
-  // compare this, whole. Null where no token stood behind the write.
+  // The author's address, lowercased. Null when unknown.
   @Index("IDX_changesets_authorEmail")
   @Column({ type: "varchar", nullable: true })
   authorEmail!: string | null
@@ -563,11 +562,11 @@ export class DatabaseService {
       /**
        * Who may be matched on the sensitive changeSet fields (author, address,
        * title, comments). "all" for an editor -- every row. For a contributor,
-       * only their own rows, named by address, so a text search cannot probe
-       * the redacted content of other people's contributions. The public fields
+       * the rows carrying their address, so a text search cannot probe the
+       * redacted content of other people's contributions. The public fields
        * (contribution id, voyage id) are always searchable by anyone.
        */
-      searchSensitiveScope?: "all" | { ownIdentity: string | null }
+      searchSensitiveScope?: "all" | { ownEmail: string | null }
       /** Inclusive lower / upper bounds on the changeSet timestamp (epoch ms). */
       dateFrom?: number
       dateTo?: number
@@ -622,14 +621,9 @@ export class DatabaseService {
       }
     }
 
-    // The address is matched whole, off its index. The name beside it is the
-    // account holder's to edit, so it says nothing about whose work this is.
+    // Matched whole, off the authorEmail index. Both sides are lowercased
+    // where a token is read, so no SQL folding is applied on top.
     //
-    // No case folding here, deliberately: an address is lowered once, where
-    // the token is read, so both sides of this are already in the same form
-    // for every author this code writes. `LOWER()` would only add a second,
-    // different folding — SQL folds by collation and JavaScript by Unicode —
-    // on top of one the data does not need.
     // Author and the date range both live on the changeSet, so they are built
     // into one nested clause -- a where holds a single condition per relation.
     const changeSetWhere: any = {}
@@ -702,11 +696,11 @@ export class DatabaseService {
             `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
             { searchTerm: term }
           )
-        } else if (searchSensitiveScope.ownIdentity) {
+        } else if (searchSensitiveScope.ownEmail) {
           b.orWhere(
             "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
               `cs.authorEmail = :searchOwn AND (${sensitive}))`,
-            { searchTerm: term, searchOwn: searchSensitiveScope.ownIdentity }
+            { searchTerm: term, searchOwn: searchSensitiveScope.ownEmail }
           )
         }
         // No identity: only the public fields above.

@@ -66,7 +66,7 @@ const storeOf = (contributions: Contribution[]) => {
   return { deps, rows }
 }
 
-const asEditor = { isEditor: true, identity: EDITOR }
+const asEditor = { isEditor: true, identity: EDITOR, authorEmail: EDITOR }
 
 test("an editor approving a batch accepts every Submitted contribution", async () => {
   const { deps, rows } = storeOf([
@@ -143,7 +143,12 @@ test("a contributor cannot approve a batch of other people's work", async () => 
     draft("theirs", Submitted, "other@x.org")
   ])
   const outcome = await approveBatchInChunks(
-    { ids: ["theirs"], isEditor: false, identity: CONTRIBUTOR },
+    {
+      ids: ["theirs"],
+      isEditor: false,
+      identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR
+    },
     deps
   )
   expect(outcome.changed).toEqual([])

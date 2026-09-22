@@ -401,7 +401,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       if (raw === undefined) {
         return undefined
       }
-      return typeof raw === "string" && raw.length > 0 ? raw : null
+      return typeof raw === "string" && raw.trim().length > 0 ? raw : null
     }
     const rootId = readFilter("root_id")
     const rootSchema = readFilter("root_schema")
@@ -430,8 +430,8 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
         .json({ error: "You cannot list contributions made by others" })
       return
     }
-    // Whoever asked, the query runs on the address as it is recorded, so the
-    // spelling a client happened to use cannot narrow the result to nothing.
+    // The query runs on the trimmed, lowercased address, the form a token is
+    // read in.
     const author =
       requestedEmail === undefined
         ? undefined
@@ -486,9 +486,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       search,
       // An editor may match the sensitive changeSet fields on every row; a
       // contributor only on their own, so a search cannot probe redacted rows.
-      searchSensitiveScope: isEditor
-        ? "all"
-        : { ownIdentity: ownEmail ?? null },
+      searchSensitiveScope: isEditor ? "all" : { ownEmail: ownEmail ?? null },
       dateFrom,
       dateTo
     })
@@ -615,14 +613,11 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
 })
 
 /**
- * The identity the token verified: the address it carried, or its subject when
- * it carries none. Decisions are recorded under it, and a contribution's
- * `authorEmail` is compared against it.
+ * The identity the token verified: its address claim, or its subject when it
+ * carries none. Decisions are recorded under it.
  *
- * Only claims the token carries are considered, and the address is preferred:
- * a display name lives in `user_metadata`, which the account holder edits at
- * will, so identifying by name would let one account claim another's work by
- * copying its name.
+ * Only claims the token carries count -- a display name lives in
+ * `user_metadata`, which the account holder edits at will.
  */
 const getAuthorIdentity = (req: Request): string | null => {
   const user = (req as any).user
@@ -635,11 +630,7 @@ const getAuthorIdentity = (req: Request): string | null => {
   return claim ? claim.trim().toLowerCase() : null
 }
 
-/**
- * The address the token carried, lowercased, which is what a contribution is
- * owned by. Null for a token carrying none: such an account reads, and acts as
- * an editor if it holds the role, but authors nothing.
- */
+/** The token's address claim, trimmed and lowercased, or null if it has none. */
 const getAuthorEmail = (req: Request): string | null => {
   const email = (req as any).user?.email
   return typeof email === "string" && email.trim().length > 0
@@ -657,10 +648,8 @@ const isAuthorOf = (
 }
 
 /**
- * How a request's author is recorded: the name to show, and the address the
- * work is owned by. An account with no name to show is shown by its address.
- *
- * Null when the token carries no address, which authoring requires.
+ * The display name and address to record on a change set, or null when the
+ * token carries no address. The name falls back to the address.
  */
 const getAuthorFromRequest = (
   req: Request
@@ -887,7 +876,8 @@ app.patch(
             ? { decisionComments: req.body.decisionComments }
             : {}),
           isEditor: hasEditorRole((req as any).user?.app_metadata),
-          identity: getAuthorIdentity(req) ?? null
+          identity: getAuthorIdentity(req) ?? null,
+          authorEmail: getAuthorEmail(req)
         },
         statusChangeDeps
       )
@@ -928,7 +918,8 @@ app.patch("/contributions/bulk-status", authenticateJWT, async (req, res) => {
         decisionComments,
         commentSupplied: "decisionComments" in req.body,
         isEditor: hasEditorRole((req as any).user?.app_metadata),
-        identity: getAuthorIdentity(req) ?? null
+        identity: getAuthorIdentity(req) ?? null,
+        authorEmail: getAuthorEmail(req)
       },
       statusChangeDeps
     )
@@ -1035,9 +1026,8 @@ app.post(
         })
         return
       }
-      // Add author and timestamp to changeSet if not provided
-      // A review's name may name the tool that produced it; the address is
-      // the editor's, from the token.
+      // `author` falls back to the token's name; `authorEmail` always comes
+      // from the token.
       const reviewChangeSet = {
         ...changeSet,
         author: changeSet.author || getAuthorFromRequest(req)?.author || "Unknown",
@@ -1407,6 +1397,7 @@ app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res
 
     const isEditor = hasEditorRole((req as any).user?.app_metadata)
     const identity = getAuthorIdentity(req) ?? null
+    const authorEmail = getAuthorEmail(req)
     // Run in the background: the response returns the job id immediately and the
     // client polls. Any throw fails the job rather than the (already sent)
     // response.
@@ -1417,6 +1408,7 @@ app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res
             ids,
             isEditor,
             identity,
+            authorEmail,
             onChunkProcessed: (n) => advanceApproveProgress(job.jobId, n),
             // Re-check each chunk against the live state right before deciding
             // it: membership was snapshotted once, but over a minutes-long job

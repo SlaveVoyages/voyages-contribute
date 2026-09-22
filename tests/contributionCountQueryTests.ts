@@ -141,13 +141,13 @@ test("the total counts only what the search matches, within its redaction scope"
 
   const asAuthor = await listAndCapture({
     search,
-    searchSensitiveScope: { ownIdentity: "alice@x.com" }
+    searchSensitiveScope: { ownEmail: "alice@x.com" }
   })
   expect(asAuthor.result.total).toBe(1)
 
   const asSomeoneElse = await listAndCapture({
     search,
-    searchSensitiveScope: { ownIdentity: "bob@x.com" }
+    searchSensitiveScope: { ownEmail: "bob@x.com" }
   })
   expect(asSomeoneElse.result.total).toBe(0)
   expect(asSomeoneElse.result.data).toEqual([])
