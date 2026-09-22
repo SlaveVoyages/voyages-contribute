@@ -38,7 +38,9 @@ type AuthenticateJWT = (
 
 interface BulkImportDeps {
   authenticateJWT: AuthenticateJWT
-  getAuthorFromRequest: (req: Request) => string | null
+  getAuthorFromRequest: (
+    req: Request
+  ) => { author: string; authorEmail: string } | null
   dbService: DatabaseService
   resolver: DataResolver
   uploadDir: string
@@ -299,6 +301,7 @@ interface RunImportArgs {
   onError: "abort" | "continue"
   filename: string
   author: string
+  authorEmail: string
   batchTitle?: string
   batchComments?: string
   contributionTitle?: string
@@ -317,6 +320,7 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
     onError,
     filename,
     author,
+    authorEmail,
     dbService,
     resolver
   } = args
@@ -435,6 +439,7 @@ const runImport = async (args: RunImportArgs): Promise<void> => {
         changeSet: {
           id: randomUUID(),
           author,
+          authorEmail,
           changes: [update],
           comments,
           title,
@@ -596,15 +601,16 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
       const author = getAuthorFromRequest(req)
       if (!author) {
         await cleanup()
-        res
-          .status(401)
-          .json({ error: "Cannot determine author from token" })
+        res.status(403).json({
+          error: "Cannot determine author from token",
+          details: "Importing contributions needs an account with an address."
+        })
         return
       }
       const job = createJob({
         entityName,
         filename: req.file.originalname,
-        author
+        author: author.author
       })
       // Fire-and-forget; the cleanup of the uploaded file happens inside
       // runImport's finally block. We don't await here so the HTTP response
@@ -616,7 +622,8 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
         status: parsed.contribStatus,
         onError: parsed.onError,
         filename: req.file.originalname,
-        author,
+        author: author.author,
+        authorEmail: author.authorEmail,
         batchTitle: parsed.batchTitle,
         batchComments: parsed.batchComments,
         contributionTitle: parsed.contributionTitle,

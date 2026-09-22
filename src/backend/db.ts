@@ -16,8 +16,8 @@ import {
   In,
   Not,
   EntityManager,
+  FindManyOptions,
   IsNull,
-  Raw,
   Brackets,
   Between,
   MoreThanOrEqual,
@@ -26,7 +26,6 @@ import {
 } from "typeorm"
 import { v4 as uuidv4 } from "uuid"
 import type { EntityChange, EntityRef } from "../models/changeSets"
-import { authorIdentity } from "./authz"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import { extractNationality } from "./nationality"
 import { extractShipName } from "./shipName"
@@ -66,8 +65,14 @@ export class ChangeSetEntity implements ChangeSet {
   @PrimaryGeneratedColumn("uuid")
   id!: string
 
+  // The display name recorded with the change set.
   @Column({ type: "varchar" })
   author!: string
+
+  // The author's address, lowercased. Null when unknown.
+  @Index("IDX_changesets_authorEmail")
+  @Column({ type: "varchar", nullable: true })
+  authorEmail!: string | null
 
   @Column({ type: "varchar" })
   title!: string
@@ -75,6 +80,7 @@ export class ChangeSetEntity implements ChangeSet {
   @Column({ type: "varchar" })
   comments!: string
 
+  @Index("IDX_changesets_timestamp")
   @Column({ type: "bigint", transformer: epochMilliseconds })
   timestamp!: number
 
@@ -353,25 +359,16 @@ const likeLiteral = (value: string): string =>
   value.replace(/[!%_]/g, (char) => `${LIKE_ESCAPE}${char}`)
 
 /**
- * Applies a listContributions sort to a query builder. Used on the search /
- * voyage-id path, which cannot use a find-options `order` object. Relation
- * columns are named through the aliases setFindOptions generates for the
- * `contribAllRelations` joins (`<mainAlias>__<relation>`). `id` is always the
- * tiebreaker beneath the primary column, and takes the caller's direction when
- * it is itself the primary.
+ * Orders a contribution query by `sortBy`. `id` breaks ties ascending, and
+ * takes `sortOrder` when it is the sort column.
  */
 const applyOrderToQueryBuilder = (
   qb: SelectQueryBuilder<ContributionEntity>,
   sortBy: string,
   sortOrder: "ASC" | "DESC"
 ): void => {
-  // A relation column is ordered through a correlated subquery selected under a
-  // dotless alias, not the relation's join alias. Two reasons: the join alias
-  // setFindOptions generates is a TypeORM-internal name (0.3 spells the
-  // changeSet join `contribution__contribution_changeSet`, not
-  // `contribution__changeSet`), and the join-based pagination path parses a
-  // dotted orderBy as `alias.column`, which a subquery or json_extract(...) is
-  // not. Selecting the value under a plain alias sidesteps both.
+  // A relation column is ordered by a correlated subquery, so the query needs
+  // no join for it.
   const orderBySubquery = (sql: string) =>
     qb.addSelect(sql, "list_sort_key").orderBy("list_sort_key", sortOrder)
   switch (sortBy) {
@@ -397,6 +394,7 @@ const applyOrderToQueryBuilder = (
       )
       break
     case "batch":
+      // Unassigned rows have a null title and sort together at one end.
       orderBySubquery(
         "(SELECT b.title FROM publication_batches b WHERE b.id = contribution.batchId)"
       )
@@ -537,6 +535,7 @@ export class DatabaseService {
        */
       excludeStatus?: ContributionStatus | ContributionStatus[]
       batchId?: number | null
+      /** The author's address, matched whole. */
       author?: string
       /** Id of the root entity, e.g. a voyage id. */
       rootId?: string | number
@@ -556,18 +555,18 @@ export class DatabaseService {
       sortOrder?: "ASC" | "DESC"
       /**
        * Free-text search. Case-insensitive OR match across the contribution id,
-       * the root voyage id, and (subject to visibility) the changeSet author /
-       * title / comments.
+       * the root voyage id, and (subject to visibility) the changeSet author,
+       * address, title and comments.
        */
       search?: string
       /**
-       * Who may be matched on the sensitive changeSet fields (author, title,
-       * comments). "all" for an editor -- every row. For a contributor, only
-       * their own rows, named by identity, so a text search cannot probe the
+       * Who may be matched on the sensitive changeSet fields (author, address,
+       * title, comments). "all" for an editor -- every row. For a contributor,
+       * the rows carrying their address, so a text search cannot probe the
        * redacted content of other people's contributions. The public fields
        * (contribution id, voyage id) are always searchable by anyone.
        */
-      searchSensitiveScope?: "all" | { ownIdentity: string | null }
+      searchSensitiveScope?: "all" | { ownEmail: string | null }
       /** Inclusive lower / upper bounds on the changeSet timestamp (epoch ms). */
       dateFrom?: number
       dateTo?: number
@@ -622,31 +621,14 @@ export class DatabaseService {
       }
     }
 
-    // An author reads `Name <address>`, and the name is editable, so matching
-    // the whole string would hide a contributor's own work from them the first
-    // time they corrected their profile. Only the address is matched, either
-    // closing the string or standing alone, which is what an account with no
-    // name to show records.
+    // Matched whole, off the authorEmail index. Both sides are lowercased
+    // where a token is read, so no SQL folding is applied on top.
     //
-    // No case folding here, deliberately: an address is lowered once, where
-    // the token is read, so both sides of this are already in the same form
-    // for every author this code writes. `LOWER()` would only add a second,
-    // different folding — SQL folds by collation and JavaScript by Unicode —
-    // on top of one the data does not need.
     // Author and the date range both live on the changeSet, so they are built
     // into one nested clause -- a where holds a single condition per relation.
     const changeSetWhere: any = {}
     if (author) {
-      const identity = authorIdentity(author)
-      changeSetWhere.author = Raw(
-        (column) =>
-          `(${column} = :authorIdentity` +
-          ` OR ${column} LIKE :authorSuffix ESCAPE '${LIKE_ESCAPE}')`,
-        {
-          authorIdentity: identity,
-          authorSuffix: `%<${likeLiteral(identity)}>`
-        }
-      )
+      changeSetWhere.authorEmail = author
     }
     // Date range on the changeSet timestamp -- the same value the Date column
     // shows and `sortBy: "timestamp"` orders by. Open-ended on either side.
@@ -681,122 +663,86 @@ export class DatabaseService {
     // Calculate offset
     const offset = (page - 1) * limit
 
-    // Only a free-text search needs a query builder: it is an OR group across
-    // columns and a relation. Ordering by the voyage id no longer does -- it is
-    // the `rootIdNum` column now, nameable in a find-options `order` like any
-    // other. (A search combined with a voyage-id sort still lands here, and
-    // applyOrderToQueryBuilder orders it by that same column.)
-    const useQueryBuilder = search !== undefined
+    let searchClause: Brackets | undefined
+    if (search !== undefined) {
+      // Case-insensitive %term% match. LIKE folds case for ASCII on both
+      // sqlite and the app's MySQL collation; the term is escaped so % and _
+      // in the query are literals.
+      const term = `%${likeLiteral(search)}%`
+      searchClause = new Brackets((b) => {
+        // Public fields, searchable by anyone: the contribution id and the
+        // voyage id (`root.id`).
+        b.where(
+          `contribution.id LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
+          { searchTerm: term }
+        ).orWhere(
+          `json_extract(contribution.root, '$.id') LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
+          { searchTerm: term }
+        )
+        // Sensitive fields: the changeSet's author, title, comments and body,
+        // matched through a subquery on `changeSetId` so the query needs no
+        // join. Scoped by `searchSensitiveScope`.
+        //
+        // `cs.changes` is the whole edit as JSON text, so a term matches any
+        // value in the change tree, and its property keys too.
+        const sensitive =
+          `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+          ` OR cs.authorEmail LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+          ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+          ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
+          ` OR cs.changes LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
+        if (searchSensitiveScope === "all") {
+          b.orWhere(
+            `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
+            { searchTerm: term }
+          )
+        } else if (searchSensitiveScope.ownEmail) {
+          b.orWhere(
+            "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
+              `cs.authorEmail = :searchOwn AND (${sensitive}))`,
+            { searchTerm: term, searchOwn: searchSensitiveScope.ownEmail }
+          )
+        }
+        // No identity: only the public fields above.
+      })
+    }
 
-    if (useQueryBuilder) {
+    // The page's ids and the total are read joined only to the relations
+    // `where` names, and the page's rows are then loaded by id with every
+    // relation. A joined `changesets` row is read with its `changes` body,
+    // which the ids and the total do not need.
+    //
+    // Every relation `where` names is to-one, so each result row is one
+    // contribution and LIMIT / OFFSET count contributions.
+    const filtered = (options: FindManyOptions<ContributionEntity>) => {
       const qb = this.contributionRepo
         .createQueryBuilder("contribution")
-        .setFindOptions({ where, relations: contribAllRelations })
-
-      if (search !== undefined) {
-        // Case-insensitive %term% match. LIKE folds case for ASCII on both
-        // sqlite and the app's MySQL collation; the term is escaped so % and _
-        // in the query are literals.
-        const term = `%${likeLiteral(search)}%`
-        qb.andWhere(
-          new Brackets((b) => {
-            // Public fields, searchable by anyone: the contribution id and the
-            // voyage id (root.id, via the same JSON path the sort uses).
-            b.where(
-              `contribution.id LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
-              { searchTerm: term }
-            ).orWhere(
-              `json_extract(contribution.root, '$.id') LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`,
-              { searchTerm: term }
-            )
-            // Sensitive fields (author / title / comments) plus the changeSet
-            // body live on the changeSet. Matched via a subquery keyed by the
-            // FK so this does not depend on the join alias. For an editor,
-            // across every row; for a contributor, only their own rows -- named
-            // by identity -- so a search cannot probe the redacted content of
-            // other people's work.
-            //
-            // `cs.changes` is the whole edit as one simple-json (text) column.
-            // A LIKE over it is how the ship name -- and any other value buried
-            // in the change tree, which has no column of its own -- becomes
-            // searchable. It is deliberately broad: a term can match a value
-            // anywhere in the tree, not only the ship, and matches the raw JSON
-            // (so it also sees the property keys). That is the trade for
-            // searching a field the schema does not surface as a column.
-            const sensitive =
-              `cs.author LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
-              ` OR cs.title LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
-              ` OR cs.comments LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'` +
-              ` OR cs.changes LIKE :searchTerm ESCAPE '${LIKE_ESCAPE}'`
-            if (searchSensitiveScope === "all") {
-              b.orWhere(
-                `contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
-                { searchTerm: term }
-              )
-            } else if (searchSensitiveScope.ownIdentity) {
-              const own = searchSensitiveScope.ownIdentity
-              b.orWhere(
-                "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
-                  `(cs.author = :searchOwn OR cs.author LIKE :searchOwnSuffix ESCAPE '${LIKE_ESCAPE}')` +
-                  ` AND (${sensitive}))`,
-                {
-                  searchTerm: term,
-                  searchOwn: own,
-                  searchOwnSuffix: `%<${likeLiteral(own)}>`
-                }
-              )
-            }
-            // An anonymous contributor (no identity) matches only the public
-            // fields above -- nothing more is added.
-          })
-        )
+        .setFindOptions(options)
+      if (searchClause) {
+        qb.andWhere(searchClause)
       }
-
-      applyOrderToQueryBuilder(qb, sortBy, sortOrder)
-      const [data, total] = await qb.skip(offset).take(limit).getManyAndCount()
-      return { data, total, page, limit }
+      return qb
     }
+    const idQuery = filtered({ where, select: { id: true } })
+    applyOrderToQueryBuilder(idQuery, sortBy, sortOrder)
+    const [idRows, total] = await Promise.all([
+      idQuery
+        .offset(offset)
+        .limit(limit)
+        .getRawMany<{ contribution_id: string }>(),
+      filtered({ where }).getCount()
+    ])
 
-    // Build order clause.
-    //
-    // Real columns and to-one relations are offered.
-    const order: any = {}
-    if (sortBy === "author") {
-      order.changeSet = { author: sortOrder }
-    } else if (sortBy === "timestamp") {
-      order.changeSet = { timestamp: sortOrder }
-    } else if (sortBy === "comments") {
-      order.changeSet = { comments: sortOrder }
-    } else if (sortBy === "status") {
-      order.status = sortOrder
-    } else if (sortBy === "voyage_id") {
-      // Denormalised numeric voyage id; see the rootIdNum column.
-      order.rootIdNum = sortOrder
-    } else if (sortBy === "shipName") {
-      order.shipName = sortOrder
-    } else if (sortBy === "nationality") {
-      order.nationality = sortOrder
-    } else if (sortBy === "decidedBy") {
-      order.decidedBy = sortOrder
-    } else if (sortBy === "batch") {
-      // `batch` is a to-one relation, so its rows are not multiplied by the
-      // join and pagination stays correct. Unassigned rows have a null title,
-      // which the database groups at one end of the order.
-      order.batch = { title: sortOrder }
-    }
-    // `id` doubles as the tiebreaker, so it is always in the clause. When it is
-    // what the caller asked to order by, it takes their direction; otherwise it
-    // stays ASC to break ties stably beneath the primary column.
-    order.id = sortBy === "id" ? sortOrder : "ASC"
-
-    // Execute queries
-    const [data, total] = await this.contributionRepo.findAndCount({
-      where,
-      order,
-      skip: offset,
-      take: limit,
-      relations: contribAllRelations
-    })
+    const ids = idRows.map((row) => row.contribution_id)
+    const rows =
+      ids.length === 0
+        ? []
+        : await this.contributionRepo.find({
+            where: { ...where, id: In(ids) },
+            relations: contribAllRelations
+          })
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    const data = ids.flatMap((id) => byId.get(id) ?? [])
 
     return {
       data,
@@ -903,6 +849,7 @@ export class DatabaseService {
     contributionId: string,
     reviewChangeSetData: {
       author: string
+      authorEmail: string | null
       title: string
       comments: string
       timestamp: number
@@ -930,6 +877,7 @@ export class DatabaseService {
       // 3. Create the ChangeSet for the review
       const changeSetEntity = new ChangeSetEntity()
       changeSetEntity.author = reviewChangeSetData.author
+      changeSetEntity.authorEmail = reviewChangeSetData.authorEmail
       changeSetEntity.title = reviewChangeSetData.title
       changeSetEntity.comments = reviewChangeSetData.comments
       changeSetEntity.timestamp = reviewChangeSetData.timestamp
@@ -1200,7 +1148,7 @@ export class DatabaseService {
       const result = await manager.delete(ContributionEntity, id)
       const deleted = result.affected ? result.affected > 0 : false
       if (deleted && changeSetIds.length) {
-        await manager.delete(ChangeSetEntity, In(changeSetIds))
+        await manager.delete(ChangeSetEntity, changeSetIds)
       }
       return { deleted, mediaFiles: deleted ? mediaFiles : [] }
     })
@@ -1372,7 +1320,7 @@ export class DatabaseService {
           .where("batchId = :batchId", { batchId })
           .execute()
         if (changeSetIds.length) {
-          await manager.delete(ChangeSetEntity, In(changeSetIds))
+          await manager.delete(ChangeSetEntity, changeSetIds)
         }
       } else {
         // Set-based unassign: one UPDATE rather than loading every row and saving it back, which for a 7,000-voyage batch was thousands of statements.

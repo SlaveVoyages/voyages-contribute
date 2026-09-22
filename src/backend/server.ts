@@ -27,7 +27,7 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
-import { authorIdentity, hasEditorRole, requireEditor } from "./authz"
+import { hasEditorRole, requireEditor } from "./authz"
 import {
   changeManyStatuses,
   changeOneStatus,
@@ -268,10 +268,9 @@ app.get("/", (_, res) => {
   res.json({ message: "Contributions API running" })
 })
 
-// Hard upper bound on `limit` so a client requesting e.g. 50000 doesn't
-// translate into a `LIMIT 50000` against MySQL with relations expanded.
-// Callers above the cap are silently clamped; the response echoes the
-// actual `limit` applied so the client can paginate.
+// Hard upper bound on `limit`, which bounds the rows each page loads with
+// their relations. Callers above the cap are silently clamped; the response
+// echoes the actual `limit` applied so the client can paginate.
 const DEFAULT_LIMIT = 10
 const MAX_LIMIT = 500
 
@@ -402,7 +401,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       if (raw === undefined) {
         return undefined
       }
-      return typeof raw === "string" && raw.length > 0 ? raw : null
+      return typeof raw === "string" && raw.trim().length > 0 ? raw : null
     }
     const rootId = readFilter("root_id")
     const rootSchema = readFilter("root_schema")
@@ -417,31 +416,28 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     }
 
     const isEditor = hasEditorRole((req as any).user?.app_metadata)
-    const ownIdentity = getAuthorIdentity(req)
+    const ownEmail = getAuthorEmail(req)
 
     // Narrowing to one author is how a contributor lists their own work at any
     // status, which /contributions/wip cannot do. Other people's is not theirs
     // to enumerate — and asking for it is refused rather than quietly answered
     // with their own, which would look like an authoritative answer about
     // somebody else.
-    if (
-      requestedAuthor !== undefined &&
-      !isEditor &&
-      authorIdentity(requestedAuthor).toLowerCase() !== ownIdentity
-    ) {
+    const requestedEmail = requestedAuthor?.trim().toLowerCase()
+    if (requestedEmail !== undefined && !isEditor && requestedEmail !== ownEmail) {
       res
         .status(403)
         .json({ error: "You cannot list contributions made by others" })
       return
     }
-    // Whoever asked, the query runs on the identity as it is recorded, so the
-    // spelling a client happened to use cannot narrow the result to nothing.
+    // The query runs on the trimmed, lowercased address, the form a token is
+    // read in.
     const author =
-      requestedAuthor === undefined
+      requestedEmail === undefined
         ? undefined
         : isEditor
-          ? requestedAuthor
-          : (ownIdentity ?? undefined)
+          ? requestedEmail
+          : (ownEmail ?? undefined)
 
     // Free-text search over the grid. Empty or repeated (array) values are
     // ignored rather than 400-ing -- an empty box just means "no search".
@@ -490,9 +486,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       search,
       // An editor may match the sensitive changeSet fields on every row; a
       // contributor only on their own, so a search cannot probe redacted rows.
-      searchSensitiveScope: isEditor
-        ? "all"
-        : { ownIdentity: ownIdentity ?? null },
+      searchSensitiveScope: isEditor ? "all" : { ownEmail: ownEmail ?? null },
       dateFrom,
       dateTo
     })
@@ -502,8 +496,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     // else's work is not theirs to read, though, so an entry they did not
     // write says that it exists and what it is about, and nothing more.
     const data = result.data.map((contribution) =>
-      isEditor ||
-      authorIdentity(contribution.changeSet?.author ?? "") === ownIdentity
+      isEditor || (!!ownEmail && contribution.changeSet?.authorEmail === ownEmail)
         ? contribution
         : {
             id: contribution.id,
@@ -559,11 +552,12 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
 
 app.get("/contributions/wip", authenticateJWT, async (req, res) => {
   try {
-    const author = getAuthorFromRequest(req)
-    if (!author) {
-      res
-        .status(400)
-        .json({ error: "Cannot determine author from token or request" })
+    const authorEmail = getAuthorEmail(req)
+    if (!authorEmail) {
+      res.status(403).json({
+        error: "Cannot determine author from token",
+        details: "Listing your own contributions needs an account with an address."
+      })
       return
     }
     // Parse status / exclude_status like the editor /contributions route, so
@@ -576,14 +570,14 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
     const excludeStatus = parseStatusParam(req.query.exclude_status)
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
-      author,
+      author: authorEmail,
       status,
       excludeStatus
     })
     res.json(contributions)
   } catch (error) {
     console.error(
-      `Error fetching contributions for author ${getAuthorFromRequest(req)}:`,
+      `Error fetching contributions for author ${getAuthorEmail(req)}:`,
       error
     )
     res.status(500).json({ error: "Failed to fetch contributions" })
@@ -604,8 +598,7 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
     // for its author and for editors.
     if (
       !hasEditorRole((req as any).user?.app_metadata) &&
-      authorIdentity(contribution.changeSet?.author ?? "") !==
-        getAuthorIdentity(req)
+      !isAuthorOf(req, contribution)
     ) {
       res
         .status(403)
@@ -621,14 +614,11 @@ app.get("/contributions/:id", authenticateJWT, async (req, res) => {
 })
 
 /**
- * The verified identity of the requester, which every authorization check
- * compares.
+ * The identity the token verified: its address claim, or its subject when it
+ * carries none. Decisions are recorded under it.
  *
- * Only claims the token carries are considered, and the address is preferred:
- * a display name lives in `user_metadata`, which the account holder edits at
- * will, so identifying by name would let one account claim another's work by
- * copying its name. The subject stands in for a token carrying no email, so
- * such an account still has an identity rather than none.
+ * Only claims the token carries count -- a display name lives in
+ * `user_metadata`, which the account holder edits at will.
  */
 const getAuthorIdentity = (req: Request): string | null => {
   const user = (req as any).user
@@ -641,44 +631,51 @@ const getAuthorIdentity = (req: Request): string | null => {
   return claim ? claim.trim().toLowerCase() : null
 }
 
+/** The token's address claim, trimmed and lowercased, or null if it has none. */
+const getAuthorEmail = (req: Request): string | null => {
+  const email = (req as any).user?.email
+  return typeof email === "string" && email.trim().length > 0
+    ? email.trim().toLowerCase()
+    : null
+}
+
+/** Whether the request's account is the one a contribution is owned by. */
+const isAuthorOf = (
+  req: Request,
+  contribution: { changeSet?: { authorEmail?: string | null } } | null | undefined
+): boolean => {
+  const email = getAuthorEmail(req)
+  return !!email && contribution?.changeSet?.authorEmail === email
+}
+
 /**
- * How a request's author is recorded: `Jane Doe <doe.j@example.com>`, or the
- * address alone when the account has no name to show.
- *
- * The name makes a contribution legible to the next reader; the address is the
- * part that means anything, and the only part compared. Brackets are stripped
- * from the name so the address at the end stays unambiguous.
+ * The display name and address to record on a change set, or null when the
+ * token carries no address. The name falls back to the address.
  */
-const getAuthorFromRequest = (req: Request): string | null => {
-  const identity = getAuthorIdentity(req)
-  if (!identity) {
+const getAuthorFromRequest = (
+  req: Request
+): { author: string; authorEmail: string } | null => {
+  const email = getAuthorEmail(req)
+  if (!email) {
     return null
   }
   const { firstName, lastName } = (req as any).user?.metadata ?? {}
   const name = [firstName, lastName]
     .filter((part) => typeof part === "string")
     .join(" ")
-    .replace(/[<>]/g, "")
     .trim()
-  return name ? `${name} <${identity}>` : identity
+  return { author: name || email, authorEmail: email }
 }
 
 app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
   try {
-    const author = getAuthorFromRequest(req)
-    if (!author) {
-      res
-        .status(400)
-        .json({ error: "Cannot determine author from token or request" })
-      return
-    }
     // Fetch the contribution to match author and status.
     const existing = await dbService.getContribution(req.params.id)
     if (!existing) {
       res.status(404).json({ error: "Contribution not found" })
       return
     }
-    if (authorIdentity(existing.changeSet.author) !== getAuthorIdentity(req)) {
+    if (!isAuthorOf(req, existing)) {
       res
         .status(403)
         .json({ error: "You cannot delete contributions made by others" })
@@ -714,7 +711,7 @@ app.delete("/contributions/wip/:id", authenticateJWT, async (req, res) => {
 const mayActOnContribution = (
   req: Request,
   contribution:
-    | { status?: ContributionStatus; changeSet?: { author?: string } }
+    | { status?: ContributionStatus; changeSet?: { authorEmail?: string | null } }
     | null
     | undefined
 ): boolean => {
@@ -731,15 +728,19 @@ const mayActOnContribution = (
   if (contribution.status !== ContributionStatus.WorkInProgress) {
     return false
   }
-  const identity = getAuthorIdentity(req)
-  return (
-    !!identity && authorIdentity(contribution.changeSet?.author ?? "") === identity
-  )
+  return isAuthorOf(req, contribution)
 }
 
 app.post("/contributions", authenticateJWT, async (req, res) => {
   try {
     const author = getAuthorFromRequest(req)
+    if (!author) {
+      res.status(403).json({
+        error: "Cannot determine author from token",
+        details: "Authoring a contribution needs an account with an address."
+      })
+      return
+    }
     if (!isExactEntityRef(req.body.root)) {
       res.status(400).json({
         error: "Invalid root",
@@ -753,10 +754,7 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
       ? await dbService.getContribution(req.body.id)
       : null
     // If existing it must match the user.
-    if (
-      existing &&
-      authorIdentity(existing.changeSet?.author ?? "") !== getAuthorIdentity(req)
-    ) {
+    if (existing && !isAuthorOf(req, existing)) {
       res
         .status(403)
         .json({ error: "You cannot modify contributions made by others" })
@@ -792,7 +790,7 @@ app.post("/contributions", authenticateJWT, async (req, res) => {
       changeSet: {
         ...req.body.changeSet,
         id: existing?.changeSet?.id ?? randomUUID(),
-        author,
+        ...author,
         timestamp: Date.now()
       },
       media: existing?.media ?? [],
@@ -879,7 +877,8 @@ app.patch(
             ? { decisionComments: req.body.decisionComments }
             : {}),
           isEditor: hasEditorRole((req as any).user?.app_metadata),
-          identity: getAuthorIdentity(req) ?? null
+          identity: getAuthorIdentity(req) ?? null,
+          authorEmail: getAuthorEmail(req)
         },
         statusChangeDeps
       )
@@ -920,7 +919,8 @@ app.patch("/contributions/bulk-status", authenticateJWT, async (req, res) => {
         decisionComments,
         commentSupplied: "decisionComments" in req.body,
         isEditor: hasEditorRole((req as any).user?.app_metadata),
-        identity: getAuthorIdentity(req) ?? null
+        identity: getAuthorIdentity(req) ?? null,
+        authorEmail: getAuthorEmail(req)
       },
       statusChangeDeps
     )
@@ -1027,10 +1027,12 @@ app.post(
         })
         return
       }
-      // Add author and timestamp to changeSet if not provided
+      // `author` falls back to the token's name; `authorEmail` always comes
+      // from the token.
       const reviewChangeSet = {
         ...changeSet,
-        author: changeSet.author || getAuthorFromRequest(req) || "Unknown",
+        author: changeSet.author || getAuthorFromRequest(req)?.author || "Unknown",
+        authorEmail: getAuthorEmail(req),
         timestamp: changeSet.timestamp || Date.now()
       }
       const updatedContribution = await dbService.addReviewToContribution(
@@ -1396,6 +1398,7 @@ app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res
 
     const isEditor = hasEditorRole((req as any).user?.app_metadata)
     const identity = getAuthorIdentity(req) ?? null
+    const authorEmail = getAuthorEmail(req)
     // Run in the background: the response returns the job id immediately and the
     // client polls. Any throw fails the job rather than the (already sent)
     // response.
@@ -1406,6 +1409,7 @@ app.post("/batches/:id/approve", authenticateJWT, requireEditor, async (req, res
             ids,
             isEditor,
             identity,
+            authorEmail,
             onChunkProcessed: (n) => advanceApproveProgress(job.jobId, n),
             // Re-check each chunk against the live state right before deciding
             // it: membership was snapshotted once, but over a minutes-long job

@@ -73,6 +73,7 @@ for (const {
 } of rows) {
   const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
     author,
+    authorEmail: author,
     title,
     comments,
     timestamp,
@@ -118,7 +119,7 @@ test("search is case-insensitive and escapes LIKE metacharacters", async () => {
 // ── Search: contributor scope (redaction) ───────────────────────────────────
 
 test("a contributor cannot search into another author's redacted fields", async () => {
-  const asAlice = { searchSensitiveScope: { ownIdentity: "alice@x.com" } }
+  const asAlice = { searchSensitiveScope: { ownEmail: "alice@x.com" } }
   // "banana" is only in bob's comments -- not alice's to find.
   expect(await ids({ search: "banana", ...asAlice })).toEqual([])
   // "Santa" is bob's title -- likewise hidden.
@@ -130,7 +131,7 @@ test("a contributor cannot search into another author's redacted fields", async 
 })
 
 test("an anonymous contributor matches only public fields", async () => {
-  const anon = { searchSensitiveScope: { ownIdentity: null } }
+  const anon = { searchSensitiveScope: { ownEmail: null } }
   expect(await ids({ search: "cherry", ...anon })).toEqual([])
   expect(await ids({ search: "700001", ...anon })).toEqual(["sc-alice-1"])
 })
@@ -148,19 +149,19 @@ test("a ship name is redacted content: only the owner (or an editor) finds it", 
   expect(
     await ids({
       search: "Bellone",
-      searchSensitiveScope: { ownIdentity: "bob@x.com" }
+      searchSensitiveScope: { ownEmail: "bob@x.com" }
     })
   ).toEqual([])
   // Alice can, on her own row.
   expect(
     await ids({
       search: "Bellone",
-      searchSensitiveScope: { ownIdentity: "alice@x.com" }
+      searchSensitiveScope: { ownEmail: "alice@x.com" }
     })
   ).toEqual(["sc-alice-1"])
   // Anonymous matches only public fields, never the body.
   expect(
-    await ids({ search: "Bellone", searchSensitiveScope: { ownIdentity: null } })
+    await ids({ search: "Bellone", searchSensitiveScope: { ownEmail: null } })
   ).toEqual([])
 })
 

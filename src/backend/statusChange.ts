@@ -1,5 +1,5 @@
 import { Contribution, ContributionStatus } from "../models/contribution"
-import { authorIdentity, decideStatusChange } from "./authz"
+import { decideStatusChange } from "./authz"
 import { checkSubmissionReadiness } from "./submissionReadiness"
 
 /**
@@ -32,6 +32,8 @@ export interface StatusChangeRequest {
   isEditor: boolean
   /** The identity the token verified, never anything the body claimed. */
   identity: string | null
+  /** The address the token carried, compared against the contribution's. */
+  authorEmail: string | null
 }
 
 export interface StatusChangeDeps<C extends Contribution> {
@@ -57,7 +59,14 @@ export type StatusChangeResult<C extends Contribution> =
     }
 
 export const changeOneStatus = async <C extends Contribution>(
-  { id, to, decisionComments, isEditor, identity }: StatusChangeRequest,
+  {
+    id,
+    to,
+    decisionComments,
+    isEditor,
+    identity,
+    authorEmail
+  }: StatusChangeRequest,
   deps: StatusChangeDeps<C>
 ): Promise<StatusChangeResult<C>> => {
   const existing = await deps.getContribution(id)
@@ -81,9 +90,7 @@ export const changeOneStatus = async <C extends Contribution>(
 
   const verdict = decideStatusChange({
     isEditor,
-    isAuthor:
-      !!identity &&
-      authorIdentity(existing.changeSet?.author ?? "") === identity,
+    isAuthor: !!authorEmail && existing.changeSet?.authorEmail === authorEmail,
     from: existing.status,
     to,
     commentSupplied
@@ -231,7 +238,8 @@ export const changeManyStatuses = async <C extends Contribution>(
     decisionComments,
     commentSupplied,
     isEditor,
-    identity
+    identity,
+    authorEmail
   }: {
     ids: string[]
     to: ContributionStatus
@@ -239,6 +247,7 @@ export const changeManyStatuses = async <C extends Contribution>(
     commentSupplied: boolean
     isEditor: boolean
     identity: string | null
+    authorEmail: string | null
   },
   deps: StatusChangeDeps<C>
 ): Promise<BulkStatusOutcome> => {
@@ -253,7 +262,8 @@ export const changeManyStatuses = async <C extends Contribution>(
         to,
         ...(commentSupplied ? { decisionComments } : {}),
         isEditor,
-        identity
+        identity,
+        authorEmail
       },
       deps
     )

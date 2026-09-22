@@ -98,7 +98,7 @@ const inspectApp = async () => {
         }
         next()
       },
-      getAuthorFromRequest: () => "tester",
+      getAuthorFromRequest: () => ({ author: "tester", authorEmail: "tester@x.com" }),
       dbService: undefined as never,
       resolver: undefined as never,
       uploadDir

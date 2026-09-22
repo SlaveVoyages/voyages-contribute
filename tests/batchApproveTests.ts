@@ -18,12 +18,12 @@ const CONTRIBUTOR = "contributor@slavevoyages.org"
 const draft = (
   id: string,
   status: ContributionStatus,
-  author = `Someone <${CONTRIBUTOR}>`
+  authorEmail: string | null = CONTRIBUTOR
 ): Contribution => ({
   ...sampleContributions[0],
   id,
   status,
-  changeSet: { ...sampleContributions[0].changeSet, author }
+  changeSet: { ...sampleContributions[0].changeSet, author: "Someone", authorEmail }
 })
 
 // A draft missing its Dataset value -- submittable, but not ready to accept.
@@ -66,7 +66,7 @@ const storeOf = (contributions: Contribution[]) => {
   return { deps, rows }
 }
 
-const asEditor = { isEditor: true, identity: EDITOR }
+const asEditor = { isEditor: true, identity: EDITOR, authorEmail: EDITOR }
 
 test("an editor approving a batch accepts every Submitted contribution", async () => {
   const { deps, rows } = storeOf([
@@ -140,10 +140,15 @@ test("a smaller chunk size still decides everything", async () => {
 
 test("a contributor cannot approve a batch of other people's work", async () => {
   const { deps, rows } = storeOf([
-    draft("theirs", Submitted, "Someone else <other@x.org>")
+    draft("theirs", Submitted, "other@x.org")
   ])
   const outcome = await approveBatchInChunks(
-    { ids: ["theirs"], isEditor: false, identity: CONTRIBUTOR },
+    {
+      ids: ["theirs"],
+      isEditor: false,
+      identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR
+    },
     deps
   )
   expect(outcome.changed).toEqual([])

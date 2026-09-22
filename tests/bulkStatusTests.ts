@@ -29,16 +29,16 @@ const { WorkInProgress, Submitted, Accepted, Rejected, Published } =
 const EDITOR = "editor@slavevoyages.org"
 const CONTRIBUTOR = "contributor@slavevoyages.org"
 
-/** A draft with no missing mandatory values, owned by `author`. */
+/** A draft with no missing mandatory values, owned by `authorEmail`. */
 const draft = (
   id: string,
   status: ContributionStatus,
-  author = `Someone <${CONTRIBUTOR}>`
+  authorEmail: string | null = CONTRIBUTOR
 ): Contribution => ({
   ...sampleContributions[0],
   id,
   status,
-  changeSet: { ...sampleContributions[0].changeSet, author }
+  changeSet: { ...sampleContributions[0].changeSet, author: "Someone", authorEmail }
 })
 
 /**
@@ -70,6 +70,7 @@ const storeOf = (contributions: Contribution[]) => {
 const asEditor = {
   isEditor: true,
   identity: EDITOR,
+  authorEmail: EDITOR,
   commentSupplied: false
 }
 
@@ -114,8 +115,8 @@ test("an editor accepting drafts decides every one of them", async () => {
  * would get one at a time: their own draft submitted, and nothing else moved.
  */
 test("bulk cannot reach a status the single decision would refuse", async () => {
-  const mine = draft("mine", WorkInProgress, `Me <${CONTRIBUTOR}>`)
-  const theirs = draft("theirs", WorkInProgress, "Someone else <other@x.org>")
+  const mine = draft("mine", WorkInProgress, CONTRIBUTOR)
+  const theirs = draft("theirs", WorkInProgress, "other@x.org")
   const { deps, rows } = storeOf([mine, theirs])
 
   const accepting = await changeManyStatuses(
@@ -124,6 +125,7 @@ test("bulk cannot reach a status the single decision would refuse", async () => 
       to: Accepted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     deps
@@ -137,6 +139,7 @@ test("bulk cannot reach a status the single decision would refuse", async () => 
       to: Submitted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     deps
@@ -200,7 +203,7 @@ test("a contribution decided underneath the request is reported, not overwritten
  * a contributor still owns an editable draft.
  */
 test("bulk submission and bulk acceptance are held to different things", async () => {
-  const base = draft("incomplete", WorkInProgress, `Me <${CONTRIBUTOR}>`)
+  const base = draft("incomplete", WorkInProgress, CONTRIBUTOR)
   const withoutDataset: Contribution = {
     ...base,
     changeSet: {
@@ -227,6 +230,7 @@ test("bulk submission and bulk acceptance are held to different things", async (
       to: Submitted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     storeOf([withoutDataset]).deps
@@ -249,13 +253,14 @@ test("bulk submission and bulk acceptance are held to different things", async (
  * own, or makes Dataset optional, the test above passes while testing nothing.
  */
 test("the complete fixture is one a submission would accept", async () => {
-  const { deps } = storeOf([draft("ok", WorkInProgress, `Me <${CONTRIBUTOR}>`)])
+  const { deps } = storeOf([draft("ok", WorkInProgress, CONTRIBUTOR)])
   const outcome = await changeManyStatuses(
     {
       ids: ["ok"],
       to: Submitted,
       isEditor: false,
       identity: CONTRIBUTOR,
+      authorEmail: CONTRIBUTOR,
       commentSupplied: false
     },
     deps
@@ -267,7 +272,7 @@ test("the complete fixture is one a submission would accept", async () => {
 test("rejecting reports the same shape as accepting", async () => {
   const { deps } = storeOf([draft("a", Submitted), draft("b", Submitted)])
   const outcome = await changeOneStatus(
-    { id: "a", to: Rejected, isEditor: true, identity: EDITOR },
+    { id: "a", to: Rejected, isEditor: true, identity: EDITOR, authorEmail: EDITOR },
     deps
   )
   expect(outcome.kind).toBe("changed")

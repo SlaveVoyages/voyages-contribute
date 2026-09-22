@@ -3,6 +3,7 @@ import { mkdtempSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { PublishedAsEpochMillis1786300000000 } from "../src/backend/migrations/1786300000000-PublishedAsEpochMillis"
+import { AllMigrations } from "../src/backend/migrations/1786100000000-InitialSchema"
 
 /**
  * That the migrations produce the schema the entities are declared against.
@@ -56,6 +57,97 @@ test("a publication date is stored as a number, and can be rolled back", async (
   try {
     await new PublishedAsEpochMillis1786300000000().up(runner)
     expect(await publishedType()).toBe("bigint")
+  } finally {
+    await runner.release()
+  }
+})
+
+test("the changeset author email is split out of the author, indexed, and folded back on rollback", async () => {
+  await AppDataSource.runMigrations({ transaction: "all" })
+  const migration = AllMigrations.map((m) => new m()).find(
+    (m) => (m as { name?: string }).name === "ChangeSetAuthorEmailAndTimestampIndex1786700000000"
+  )!
+  const indexes = async (): Promise<string[]> =>
+    (await AppDataSource.query("PRAGMA index_list(changesets)"))
+      .map((index: { name: string }) => index.name)
+      .filter((name: string) => name.startsWith("IDX_changesets_"))
+      .sort()
+  const authors = async (): Promise<Record<string, string>> =>
+    Object.fromEntries(
+      (
+        await AppDataSource.query(
+          "SELECT id, author, authorEmail FROM changesets WHERE id LIKE 'legacy-%' ORDER BY id"
+        )
+      ).map((row: { id: string; author: string; authorEmail: string | null }) => [
+        row.id,
+        `${row.author} | ${row.authorEmail ?? "(none)"}`
+      ])
+    )
+
+  expect(await indexes()).toEqual([
+    "IDX_changesets_authorEmail",
+    "IDX_changesets_timestamp"
+  ])
+
+  const runner = AppDataSource.createQueryRunner()
+  try {
+    await migration.down(runner)
+    expect(await indexes()).toEqual([])
+
+    // Author values with and without an embedded address.
+    const legacy: [string, string][] = [
+      ["legacy-name", "Jane Doe <j@x.com>"],
+      ["legacy-bare", "k@x.com"],
+      ["legacy-none", "Local Dev"],
+      ["legacy-subject", "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84>"],
+      // Addresses are lowercased where a token is read, so a value recorded in
+      // another case has to arrive in that same form to be matched against.
+      ["legacy-upper", "Jane Doe <J@X.com>"],
+      ["legacy-padded", "  K@X.com  "]
+    ]
+    for (const [id, author] of legacy) {
+      await AppDataSource.query(
+        "INSERT INTO changesets (id, author, title, comments, timestamp, changes) VALUES (?, ?, 't', '', 0, '[]')",
+        [id, author]
+      )
+    }
+
+    await migration.up(runner)
+    await migration.up(runner)
+    expect(await indexes()).toEqual([
+      "IDX_changesets_authorEmail",
+      "IDX_changesets_timestamp"
+    ])
+    expect(await authors()).toEqual({
+      "legacy-name": "Jane Doe | j@x.com",
+      // An author value that is just an address.
+      "legacy-bare": "k@x.com | k@x.com",
+      // Neither of these holds an address, so none comes out of them.
+      "legacy-none": "Local Dev | (none)",
+      "legacy-subject":
+        "Nameless <7d1f6a52-0c33-4f1e-9a77-2b6c1f0e5d84> | (none)",
+      "legacy-upper": "Jane Doe | j@x.com",
+      "legacy-padded": "k@x.com | k@x.com"
+    })
+
+    await migration.down(runner)
+    await migration.down(runner)
+    expect(
+      Object.fromEntries(
+        (
+          await AppDataSource.query(
+            "SELECT id, author FROM changesets WHERE id LIKE 'legacy-%' ORDER BY id"
+          )
+        ).map((row: { id: string; author: string }) => [row.id, row.author])
+      )
+    ).toEqual({
+      ...Object.fromEntries(legacy),
+      // A value the split normalised comes back in the normalised form.
+      "legacy-upper": "Jane Doe <j@x.com>",
+      "legacy-padded": "k@x.com"
+    })
+
+    await migration.up(runner)
   } finally {
     await runner.release()
   }
