@@ -268,10 +268,9 @@ app.get("/", (_, res) => {
   res.json({ message: "Contributions API running" })
 })
 
-// Hard upper bound on `limit` so a client requesting e.g. 50000 doesn't
-// translate into a `LIMIT 50000` against MySQL with relations expanded.
-// Callers above the cap are silently clamped; the response echoes the
-// actual `limit` applied so the client can paginate.
+// Hard upper bound on `limit`, which bounds the rows each page loads with
+// their relations. Callers above the cap are silently clamped; the response
+// echoes the actual `limit` applied so the client can paginate.
 const DEFAULT_LIMIT = 10
 const MAX_LIMIT = 500
 

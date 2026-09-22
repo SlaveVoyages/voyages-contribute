@@ -3,6 +3,7 @@ import { mkdtempSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { PublishedAsEpochMillis1786300000000 } from "../src/backend/migrations/1786300000000-PublishedAsEpochMillis"
+import { ChangeSetTimestampIndex1786700000000 } from "../src/backend/migrations/1786700000000-ChangeSetTimestampIndex"
 
 /**
  * That the migrations produce the schema the entities are declared against.
@@ -56,6 +57,30 @@ test("a publication date is stored as a number, and can be rolled back", async (
   try {
     await new PublishedAsEpochMillis1786300000000().up(runner)
     expect(await publishedType()).toBe("bigint")
+  } finally {
+    await runner.release()
+  }
+})
+
+test("the changeset timestamp index is created, rolled back, and re-created, each at most once", async () => {
+  await AppDataSource.runMigrations({ transaction: "all" })
+  const timestampIndexes = async () =>
+    (await AppDataSource.query("PRAGMA index_list(changesets)"))
+      .map((index: { name: string }) => index.name)
+      .filter((name: string) => name === "IDX_changesets_timestamp")
+
+  expect(await timestampIndexes()).toHaveLength(1)
+
+  const migration = new ChangeSetTimestampIndex1786700000000()
+  const runner = AppDataSource.createQueryRunner()
+  try {
+    await migration.down(runner)
+    await migration.down(runner)
+    expect(await timestampIndexes()).toHaveLength(0)
+
+    await migration.up(runner)
+    await migration.up(runner)
+    expect(await timestampIndexes()).toHaveLength(1)
   } finally {
     await runner.release()
   }
