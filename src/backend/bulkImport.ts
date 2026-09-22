@@ -601,9 +601,10 @@ export const createBulkImportRouter = (deps: BulkImportDeps): Router => {
       const author = getAuthorFromRequest(req)
       if (!author) {
         await cleanup()
-        res
-          .status(401)
-          .json({ error: "Cannot determine author from token" })
+        res.status(403).json({
+          error: "Cannot determine author from token",
+          details: "Importing contributions needs an account with an address."
+        })
         return
       }
       const job = createJob({

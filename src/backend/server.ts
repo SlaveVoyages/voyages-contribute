@@ -554,9 +554,10 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
   try {
     const authorEmail = getAuthorEmail(req)
     if (!authorEmail) {
-      res
-        .status(400)
-        .json({ error: "Cannot determine author from token or request" })
+      res.status(403).json({
+        error: "Cannot determine author from token",
+        details: "Listing your own contributions needs an account with an address."
+      })
       return
     }
     // Parse status / exclude_status like the editor /contributions route, so

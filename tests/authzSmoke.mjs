@@ -147,6 +147,13 @@ try {
 
   const tokenless = await call("POST", "/contributions", noAddress, draft(990003))
   check("a token carrying no address writes nothing", tokenless.status === 403, tokenless)
+  const tokenlessWip = await call("GET", "/contributions/wip?limit=5", noAddress)
+  check(
+    "and is told the same when it asks for its own work",
+    tokenlessWip.status === 403 &&
+      tokenlessWip.body?.details?.includes("address"),
+    tokenlessWip
+  )
 
   const own = await call("GET", "/contributions?author=alice@example.org&limit=5", alice)
   check(
