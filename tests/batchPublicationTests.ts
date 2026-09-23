@@ -352,3 +352,44 @@ test("filterBatchApprovableIds returns nothing once the batch is published", asy
   await db.markBatchPublished(batch.id, "editor@x", 1786200000000)
   expect(await db.filterBatchApprovableIds(batch.id, ["rvp-1"])).toEqual([])
 })
+
+const changeSetExists = async (id: string) =>
+  (await AppDataSource.manager.countBy(ChangeSetEntity, { id })) > 0
+
+const changeSetIdOf = async (id: string) =>
+  (
+    await AppDataSource.manager.findOne(ContributionEntity, {
+      where: { id },
+      relations: ["changeSet"]
+    })
+  )?.changeSet.id
+
+test("deleting a contribution removes it and the change set it owns", async () => {
+  // The owned change set is deleted by id. Handing TypeORM a bare `In(...)` as
+  // the criteria read the operator as column names ("@instanceof") and threw,
+  // rolling back every delete -- WIP, bulk and batch alike (DD-0557).
+  await contribution("del-own", ContributionStatus.WorkInProgress)
+  const changeSetId = (await changeSetIdOf("del-own"))!
+  expect(await db.deleteContribution("del-own")).toMatchObject({ deleted: true })
+  expect(await statusOf("del-own")).toBeUndefined()
+  expect(await changeSetExists(changeSetId)).toBe(false)
+})
+
+test("deleting a batch with its contributions removes them and their change sets", async () => {
+  const batch = await db.createPublicationBatch({ title: "delete-all", comments: "" })
+  await contribution("del-all-a", ContributionStatus.Accepted)
+  await contribution("del-all-b", ContributionStatus.WorkInProgress)
+  await db.assignContributionToBatch(["del-all-a", "del-all-b"], batch.id)
+  const changeSetIds = [
+    (await changeSetIdOf("del-all-a"))!,
+    (await changeSetIdOf("del-all-b"))!
+  ]
+
+  expect(await db.deleteBatch(batch.id, true)).toMatchObject({ deleted: true })
+  expect(await db.getBatchById(batch.id)).toBeNull()
+  expect(await statusOf("del-all-a")).toBeUndefined()
+  expect(await statusOf("del-all-b")).toBeUndefined()
+  for (const id of changeSetIds) {
+    expect(await changeSetExists(id)).toBe(false)
+  }
+})
