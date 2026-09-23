@@ -17,8 +17,7 @@ process.env.CONTRIB_DB_PATH = join(
   "test.db"
 )
 
-const { AppDataSource, DatabaseService, ChangeSetEntity, ContributionEntity } =
-  await import("../src/backend/db")
+const { AppDataSource, DatabaseService } = await import("../src/backend/db")
 const { ContributionStatus } = await import("../src/models/contribution")
 
 const rows = [
@@ -62,6 +61,8 @@ const rows = [
 await AppDataSource.initialize()
 await AppDataSource.runMigrations({ transaction: "all" })
 
+const service = new DatabaseService()
+
 for (const {
   id,
   author,
@@ -71,23 +72,21 @@ for (const {
   timestamp,
   changes
 } of rows) {
-  const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-    author,
-    authorEmail: author,
-    title,
-    comments,
-    timestamp,
-    changes: changes ?? []
-  })
-  await AppDataSource.manager.save(ContributionEntity, {
+  await service.createContribution({
     id,
     root: { type: "existing", schema: "Voyage", id: voyageId },
-    changeSet,
+    changeSet: {
+      id: `cs-${id}`,
+      author,
+      authorEmail: author,
+      title,
+      comments,
+      timestamp,
+      changes: changes ?? []
+    },
     status: ContributionStatus.Submitted
-  } as ContributionEntity)
+  })
 }
-
-const service = new DatabaseService()
 
 const ids = async (options: object): Promise<string[]> =>
   (await service.listContributions({ limit: 100, ...options })).data

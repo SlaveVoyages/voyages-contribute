@@ -27,7 +27,7 @@ import fs from "fs/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
-import { hasEditorRole, requireEditor } from "./authz"
+import { hasEditorRole, redactUnlessAuthor, requireEditor } from "./authz"
 import {
   changeManyStatuses,
   changeOneStatus,
@@ -496,13 +496,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     // else's work is not theirs to read, though, so an entry they did not
     // write says that it exists and what it is about, and nothing more.
     const data = result.data.map((contribution) =>
-      isEditor || (!!ownEmail && contribution.changeSet?.authorEmail === ownEmail)
-        ? contribution
-        : {
-            id: contribution.id,
-            root: contribution.root,
-            status: contribution.status
-          }
+      isEditor ? contribution : redactUnlessAuthor(contribution, ownEmail)
     )
 
     // Add pagination links to the response
@@ -574,7 +568,12 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
       status,
       excludeStatus
     })
-    res.json(contributions)
+    res.json({
+      ...contributions,
+      data: contributions.data.map((contribution) =>
+        redactUnlessAuthor(contribution, authorEmail)
+      )
+    })
   } catch (error) {
     console.error(
       `Error fetching contributions for author ${getAuthorEmail(req)}:`,

@@ -208,18 +208,18 @@ test("an author owns their work by the email recorded with it, whatever name sit
     { author: "CSV importer script", authorEmail: null }
   ]
   for (const [index, { author, authorEmail }] of stored.entries()) {
-    const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-      author,
-      authorEmail,
-      title: "t",
-      comments: "",
-      timestamp: 0,
-      changes: []
-    })
-    await AppDataSource.manager.save(ContributionEntity, {
+    await service.createContribution({
       id: `author-${index}`,
       root: { type: "existing", schema: "Voyage", id: 900000 + index },
-      changeSet,
+      changeSet: {
+        id: `cs-author-${index}`,
+        author,
+        authorEmail,
+        title: "t",
+        comments: "",
+        timestamp: 0,
+        changes: []
+      },
       status: ContributionStatus.WorkInProgress
     })
   }
@@ -446,4 +446,28 @@ test("a contribution is never fetched without an id", async () => {
   expect(await service.getContribution(undefined as unknown as string)).toBeNull()
   expect(await service.getContribution("")).toBeNull()
   expect(await service.getContribution("a")).not.toBeNull()
+})
+
+test("a reader who is not the author is told that a contribution exists, and no more", async () => {
+  const { redactUnlessAuthor } = await import("../src/backend/authz")
+  const row = {
+    id: "redact-1",
+    root: { type: "existing", schema: "Voyage", id: 7 },
+    status: ContributionStatus.Submitted,
+    decisionComments: "an editor's note",
+    changeSet: { authorEmail: "a@x.com", title: "a title", comments: "notes" }
+  }
+  const summary = {
+    id: "redact-1",
+    root: row.root,
+    status: ContributionStatus.Submitted
+  }
+
+  expect(redactUnlessAuthor(row, "a@x.com")).toBe(row)
+  expect(redactUnlessAuthor(row, "b@x.com")).toEqual(summary)
+  // A reader with no address, and a row with none, are nobody's author.
+  expect(redactUnlessAuthor(row, null)).toEqual(summary)
+  expect(
+    redactUnlessAuthor({ ...row, changeSet: { authorEmail: null } }, "a@x.com")
+  ).toEqual(summary)
 })

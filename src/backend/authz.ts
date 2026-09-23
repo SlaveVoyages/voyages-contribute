@@ -35,6 +35,31 @@ export const hasEditorRole = (
   return false
 }
 
+/** The parts of a contribution that are shown to anyone who may ask. */
+export interface ContributionSummary {
+  id: string
+  root: unknown
+  status: number
+}
+
+/**
+ * A contribution as its author may read it, or as anyone else may: that it
+ * exists, and what it is about. A reader with no address is nobody's author.
+ */
+export const redactUnlessAuthor = <
+  C extends ContributionSummary & { changeSet?: { authorEmail?: string | null } }
+>(
+  contribution: C,
+  readerEmail: string | null
+): C | ContributionSummary =>
+  readerEmail !== null && contribution.changeSet?.authorEmail === readerEmail
+    ? contribution
+    : {
+        id: contribution.id,
+        root: contribution.root,
+        status: contribution.status
+      }
+
 export type StatusChangeVerdict =
   | { kind: "apply" }
   | { kind: "noop" }

@@ -27,23 +27,25 @@ const { ContributionStatus } = await import("../src/models/contribution")
 await AppDataSource.initialize()
 await AppDataSource.runMigrations({ transaction: "all" })
 
+const service = new DatabaseService()
+
 // The first contribution has several reviews and a media item, so a query
 // joined to them returns more rows than there are contributions.
 for (const [index, id] of ["count-a", "count-b", "count-c"].entries()) {
-  const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-    author: "Alice",
-    authorEmail: "alice@x.com",
-    title: `title ${id}`,
-    comments: `comments ${id}`,
-    timestamp: 1000 * (index + 1),
-    changes: []
-  })
-  const contribution = await AppDataSource.manager.save(ContributionEntity, {
+  const contribution = await service.createContribution({
     id,
     root: { type: "existing", schema: "Voyage", id: 800000 + index },
-    changeSet,
+    changeSet: {
+      id: `cs-${id}`,
+      author: "Alice",
+      authorEmail: "alice@x.com",
+      title: `title ${id}`,
+      comments: `comments ${id}`,
+      timestamp: 1000 * (index + 1),
+      changes: []
+    },
     status: ContributionStatus.Submitted
-  } as ContributionEntity)
+  })
   if (index === 0) {
     for (const stackOrder of [0, 1]) {
       const reviewChangeSet = await AppDataSource.manager.save(
@@ -72,8 +74,6 @@ for (const [index, id] of ["count-a", "count-b", "count-c"].entries()) {
     })
   }
 }
-
-const service = new DatabaseService()
 
 /**
  * Lists with `options` and returns the result, plus the query that picked the
@@ -128,6 +128,27 @@ test("the page's ids and the total join only the relations the filter names", as
   expect(bySearch.pageSql).not.toMatch(/\bJOIN\b/i)
   expect(bySearch.countSql).not.toMatch(/\bJOIN\b/i)
   expect(bySearch.result.total).toBe(3)
+
+  // The author's address is a column on the contribution, so filtering by it
+  // joins nothing either.
+  const byAuthor = await listAndCapture({ author: "alice@x.com" })
+  expect(byAuthor.pageSql).not.toMatch(/\bJOIN\b/i)
+  expect(byAuthor.countSql).not.toMatch(/\bJOIN\b/i)
+  expect(byAuthor.result.total).toBe(3)
+  expect(byAuthor.result.data.map((c) => c.id)).toEqual([
+    "count-a",
+    "count-b",
+    "count-c"
+  ])
+
+  // The same with a status beside it.
+  const byAuthorAndStatus = await listAndCapture({
+    author: "alice@x.com",
+    status: ContributionStatus.Submitted
+  })
+  expect(byAuthorAndStatus.pageSql).not.toMatch(/\bJOIN\b/i)
+  expect(byAuthorAndStatus.countSql).not.toMatch(/\bJOIN\b/i)
+  expect(byAuthorAndStatus.result.total).toBe(3)
 })
 
 test("the total counts only what the search matches, within its redaction scope", async () => {
@@ -172,4 +193,77 @@ test("the listing total counts contributions, and each row carries its relations
   const { result: second } = await listAndCapture({ page: 2, limit: 2 })
   expect(second.total).toBe(3)
   expect(second.data.map((c) => c.id)).toEqual(["count-c"])
+})
+
+test("a contribution carries the address of whoever wrote its change set", async () => {
+  const written = await service.createContribution({
+    id: "count-d",
+    root: { type: "existing", schema: "Voyage", id: 800009 },
+    changeSet: {
+      id: "cs-count-d",
+      author: "Bob",
+      authorEmail: "bob@x.com",
+      title: "t",
+      comments: "",
+      timestamp: 9000,
+      changes: []
+    },
+    status: ContributionStatus.WorkInProgress
+  })
+  expect(written.authorEmail).toBe("bob@x.com")
+  expect(
+    (await service.listContributions({ author: "bob@x.com", limit: 50 })).data.map(
+      (c) => c.id
+    )
+  ).toEqual(["count-d"])
+
+  // A save that carries the change set records it too, whatever path saves it.
+  const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+    author: "Hooked",
+    authorEmail: "hook@x.com",
+    title: "t",
+    comments: "",
+    timestamp: 9100,
+    changes: []
+  })
+  const hooked = await AppDataSource.manager.save(
+    AppDataSource.manager.create(ContributionEntity, {
+      id: "count-f",
+      root: { type: "existing", schema: "Voyage", id: 800011 },
+      changeSet,
+      status: ContributionStatus.WorkInProgress
+    })
+  )
+  expect(hooked.authorEmail).toBe("hook@x.com")
+
+  // A save that carries no change set leaves the address as it stands.
+  const reloaded = await AppDataSource.manager.findOneOrFail(ContributionEntity, {
+    where: { id: "count-f" }
+  })
+  reloaded.changeSet = undefined as never
+  reloaded.status = ContributionStatus.Submitted
+  await AppDataSource.manager.save(reloaded)
+  expect(
+    (
+      await AppDataSource.query(
+        "SELECT authorEmail FROM contributions WHERE id = 'count-f'"
+      )
+    )[0].authorEmail
+  ).toBe("hook@x.com")
+
+  // A change set with no address leaves the column null.
+  const anonymous = await service.createContribution({
+    id: "count-e",
+    root: { type: "existing", schema: "Voyage", id: 800010 },
+    changeSet: {
+      id: "cs-count-e",
+      author: "CSV importer script",
+      title: "t",
+      comments: "",
+      timestamp: 9001,
+      changes: []
+    },
+    status: ContributionStatus.WorkInProgress
+  })
+  expect(anonymous.authorEmail ?? null).toBeNull()
 })
