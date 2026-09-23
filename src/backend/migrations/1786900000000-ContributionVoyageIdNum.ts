@@ -3,8 +3,8 @@ import { MigrationInterface, QueryRunner, TableColumn, TableIndex } from "typeor
 import { voyageIdSortKey } from "../voyageId"
 
 
-export class ContributionVoyageIdNum1786800000000 implements MigrationInterface {
-  name = "ContributionVoyageIdNum1786800000000"
+export class ContributionVoyageIdNum1786900000000 implements MigrationInterface {
+  name = "ContributionVoyageIdNum1786900000000"
 
   private static readonly INDEX = "IDX_contributions_voyageIdNum"
   private static readonly CHUNK = 500
@@ -27,13 +27,13 @@ export class ContributionVoyageIdNum1786800000000 implements MigrationInterface 
       }
     }
 
-    for (let offset = 0; ; offset += ContributionVoyageIdNum1786800000000.CHUNK) {
+    for (let offset = 0; ; offset += ContributionVoyageIdNum1786900000000.CHUNK) {
       const rows: { id: string; root: unknown; changes: unknown }[] =
         await queryRunner.query(
           "SELECT c.id AS id, c.root AS root, cs.changes AS changes " +
             "FROM contributions c JOIN changesets cs ON cs.id = c.changeSetId " +
             "ORDER BY c.id LIMIT ? OFFSET ?",
-          [ContributionVoyageIdNum1786800000000.CHUNK, offset]
+          [ContributionVoyageIdNum1786900000000.CHUNK, offset]
         )
       if (rows.length === 0) {
         break
@@ -72,7 +72,7 @@ export class ContributionVoyageIdNum1786800000000 implements MigrationInterface 
     const table = await queryRunner.getTable("contributions")
     const exists = table?.indices.some(
       (index) =>
-        index.name === ContributionVoyageIdNum1786800000000.INDEX ||
+        index.name === ContributionVoyageIdNum1786900000000.INDEX ||
         (index.columnNames.length === 1 &&
           index.columnNames[0] === "voyageIdNum")
     )
@@ -80,7 +80,7 @@ export class ContributionVoyageIdNum1786800000000 implements MigrationInterface 
       await queryRunner.createIndex(
         "contributions",
         new TableIndex({
-          name: ContributionVoyageIdNum1786800000000.INDEX,
+          name: ContributionVoyageIdNum1786900000000.INDEX,
           columnNames: ["voyageIdNum"]
         })
       )
@@ -91,12 +91,12 @@ export class ContributionVoyageIdNum1786800000000 implements MigrationInterface 
     const table = await queryRunner.getTable("contributions")
     if (
       table?.indices.some(
-        (index) => index.name === ContributionVoyageIdNum1786800000000.INDEX
+        (index) => index.name === ContributionVoyageIdNum1786900000000.INDEX
       )
     ) {
       await queryRunner.dropIndex(
         "contributions",
-        ContributionVoyageIdNum1786800000000.INDEX
+        ContributionVoyageIdNum1786900000000.INDEX
       )
     }
     if (await queryRunner.hasColumn("contributions", "voyageIdNum")) {

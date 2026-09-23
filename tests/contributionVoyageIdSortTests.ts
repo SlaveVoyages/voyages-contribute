@@ -152,7 +152,7 @@ test("the migration backfills the sort key from change sets and reviews", async 
     .execute()
 
   const migration = AllMigrations.map((m) => new m()).find(
-    (m) => (m as { name?: string }).name === "ContributionVoyageIdNum1786800000000"
+    (m) => (m as { name?: string }).name === "ContributionVoyageIdNum1786900000000"
   )!
   const runner = AppDataSource.createQueryRunner()
   try {
