@@ -17,7 +17,7 @@ import { AllMigrations } from "../src/backend/migrations/1786100000000-InitialSc
 process.env.CONTRIB_DB_TYPE = "sqlite"
 process.env.CONTRIB_DB_PATH = join(mkdtempSync(join(tmpdir(), "contrib-mig-")), "t.db")
 
-const { AppDataSource } = await import("../src/backend/db")
+const { AppDataSource, ContributionEntity } = await import("../src/backend/db")
 await AppDataSource.initialize()
 
 const publishedType = async () => {
@@ -179,8 +179,7 @@ test("a contribution carries the address of its change set, indexed with the sta
     await migration.down(runner)
     expect(await indexes()).toEqual([])
 
-    // Rows written before the column existed: one change set with an address,
-    // one without.
+    // Two contributions: one change set with an address, one without.
     await AppDataSource.query(
       "INSERT INTO changesets (id, author, authorEmail, title, comments, timestamp, changes)" +
         " VALUES ('mig-cs-1', 'Jane Doe', 'j@x.com', 't', '', 0, '[]')," +
@@ -216,4 +215,22 @@ test("a contribution carries the address of its change set, indexed with the sta
   } finally {
     await runner.release()
   }
+})
+
+test("the entity declares the address index over the columns the migration creates", async () => {
+  await AppDataSource.runMigrations({ transaction: "all" })
+  const declared = AppDataSource.getMetadata(ContributionEntity).indices.find(
+    (index) => index.name === "IDX_contributions_authorEmail_status"
+  )
+  expect(declared?.columns.map((column) => column.propertyName)).toEqual([
+    "authorEmail",
+    "status"
+  ])
+  expect(
+    (
+      await AppDataSource.query(
+        "SELECT name FROM pragma_index_info('IDX_contributions_authorEmail_status')"
+      )
+    ).map((row: { name: string }) => row.name)
+  ).toEqual(["authorEmail", "status"])
 })

@@ -17,8 +17,7 @@ process.env.CONTRIB_DB_PATH = join(
   "test.db"
 )
 
-const { AppDataSource, DatabaseService, ChangeSetEntity, ContributionEntity } =
-  await import("../src/backend/db")
+const { AppDataSource, DatabaseService } = await import("../src/backend/db")
 const { ContributionStatus } = await import("../src/models/contribution")
 
 const rows = [

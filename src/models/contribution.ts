@@ -62,8 +62,6 @@ export interface ContributionMedia {
  * Represents a contribution and the subsequent editorial reviews.
  */
 export interface Contribution {
-  /** The author's address, copied from the change set. */
-  authorEmail?: string | null
   /**
    * The id for this Contribution in the database.
    */

@@ -130,7 +130,7 @@ test("the page's ids and the total join only the relations the filter names", as
   expect(bySearch.result.total).toBe(3)
 
   // The author's address is a column on the contribution, so filtering by it
-  // joins nothing either, and the page comes back in id order without a sort.
+  // joins nothing either.
   const byAuthor = await listAndCapture({ author: "alice@x.com" })
   expect(byAuthor.pageSql).not.toMatch(/\bJOIN\b/i)
   expect(byAuthor.countSql).not.toMatch(/\bJOIN\b/i)
@@ -141,7 +141,7 @@ test("the page's ids and the total join only the relations the filter names", as
     "count-c"
   ])
 
-  // The same with a status beside it, which the contributor lists send.
+  // The same with a status beside it.
   const byAuthorAndStatus = await listAndCapture({
     author: "alice@x.com",
     status: ContributionStatus.Submitted
@@ -217,7 +217,41 @@ test("a contribution carries the address of whoever wrote its change set", async
     )
   ).toEqual(["count-d"])
 
-  // A change set with no address leaves the column null, so the row is nobody's.
+  // A save that carries the change set records it too, whatever path saves it.
+  const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
+    author: "Hooked",
+    authorEmail: "hook@x.com",
+    title: "t",
+    comments: "",
+    timestamp: 9100,
+    changes: []
+  })
+  const hooked = await AppDataSource.manager.save(
+    AppDataSource.manager.create(ContributionEntity, {
+      id: "count-f",
+      root: { type: "existing", schema: "Voyage", id: 800011 },
+      changeSet,
+      status: ContributionStatus.WorkInProgress
+    })
+  )
+  expect(hooked.authorEmail).toBe("hook@x.com")
+
+  // A save that carries no change set leaves the address as it stands.
+  const reloaded = await AppDataSource.manager.findOneOrFail(ContributionEntity, {
+    where: { id: "count-f" }
+  })
+  reloaded.changeSet = undefined as never
+  reloaded.status = ContributionStatus.Submitted
+  await AppDataSource.manager.save(reloaded)
+  expect(
+    (
+      await AppDataSource.query(
+        "SELECT authorEmail FROM contributions WHERE id = 'count-f'"
+      )
+    )[0].authorEmail
+  ).toBe("hook@x.com")
+
+  // A change set with no address leaves the column null.
   const anonymous = await service.createContribution({
     id: "count-e",
     root: { type: "existing", schema: "Voyage", id: 800010 },

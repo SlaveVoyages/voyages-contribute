@@ -447,3 +447,27 @@ test("a contribution is never fetched without an id", async () => {
   expect(await service.getContribution("")).toBeNull()
   expect(await service.getContribution("a")).not.toBeNull()
 })
+
+test("a reader who is not the author is told that a contribution exists, and no more", async () => {
+  const { redactUnlessAuthor } = await import("../src/backend/authz")
+  const row = {
+    id: "redact-1",
+    root: { type: "existing", schema: "Voyage", id: 7 },
+    status: ContributionStatus.Submitted,
+    decisionComments: "an editor's note",
+    changeSet: { authorEmail: "a@x.com", title: "a title", comments: "notes" }
+  }
+  const summary = {
+    id: "redact-1",
+    root: row.root,
+    status: ContributionStatus.Submitted
+  }
+
+  expect(redactUnlessAuthor(row, "a@x.com")).toBe(row)
+  expect(redactUnlessAuthor(row, "b@x.com")).toEqual(summary)
+  // A reader with no address, and a row with none, are nobody's author.
+  expect(redactUnlessAuthor(row, null)).toEqual(summary)
+  expect(
+    redactUnlessAuthor({ ...row, changeSet: { authorEmail: null } }, "a@x.com")
+  ).toEqual(summary)
+})

@@ -9,15 +9,11 @@ const INDEX = "IDX_contributions_authorEmail_status"
 
 /**
  * Copies the author's address onto `contributions.authorEmail` and indexes it
- * with `status`.
+ * with `status`, the pair the author filter matches.
  *
- * A contributor's own list filters by address and pages by id. Read from the
- * change set, that costs one changeset row per candidate; on this column it is
- * one index, already in id order.
- *
- * Backfilled one statement per distinct address, each reading the address index
- * on `changesets` rather than the rows behind it. Guarded so a re-run is a
- * no-op.
+ * Backfilled one statement per distinct address, each selecting the change sets
+ * that carry it. Re-running writes the same values, so it repairs a row that
+ * has drifted rather than skipping it.
  */
 export class ContributionAuthorEmail1786800000000 implements MigrationInterface {
   name = "ContributionAuthorEmail1786800000000"
@@ -34,22 +30,23 @@ export class ContributionAuthorEmail1786800000000 implements MigrationInterface 
       )
     }
 
-    const addresses: { authorEmail: string }[] = await queryRunner.query(
-      "SELECT DISTINCT authorEmail FROM changesets WHERE authorEmail IS NOT NULL"
-    )
-    for (const { authorEmail } of addresses) {
-      await queryRunner.query(
-        "UPDATE contributions SET authorEmail = ? WHERE authorEmail IS NULL" +
-          " AND changeSetId IN (SELECT id FROM changesets WHERE authorEmail = ?)",
-        [authorEmail, authorEmail]
-      )
-    }
-
+    // Created before the backfill, so the statements below write through it.
     const table = await queryRunner.getTable("contributions")
     if (!table?.indices.some((index) => index.name === INDEX)) {
       await queryRunner.createIndex(
         "contributions",
         new TableIndex({ name: INDEX, columnNames: ["authorEmail", "status"] })
+      )
+    }
+
+    const addresses: { authorEmail: string }[] = await queryRunner.query(
+      "SELECT DISTINCT authorEmail FROM changesets WHERE authorEmail IS NOT NULL"
+    )
+    for (const { authorEmail } of addresses) {
+      await queryRunner.query(
+        "UPDATE contributions SET authorEmail = ?" +
+          " WHERE changeSetId IN (SELECT id FROM changesets WHERE authorEmail = ?)",
+        [authorEmail, authorEmail]
       )
     }
   }

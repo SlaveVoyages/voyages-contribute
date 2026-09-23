@@ -167,6 +167,7 @@ export class ContributionMediaEntity implements ContributionMedia {
 }
 
 @Entity("contributions")
+@Index("IDX_contributions_authorEmail_status", ["authorEmail", "status"])
 export class ContributionEntity implements Contribution {
   @PrimaryColumn({ type: "varchar" })
   id!: string
@@ -229,11 +230,8 @@ export class ContributionEntity implements Contribution {
   @Column({ type: "varchar", nullable: true })
   nationality?: string | null
 
-  // The author's address, copied from the changeSet on write (see
-  // createContribution). Indexed with `status` so a contributor's own list
-  // reads one index, in id order, without joining the change set. Null where
-  // the change set carries no address.
-  @Index("IDX_contributions_authorEmail_status", ["authorEmail", "status"])
+  // The author's address, from the change set. Null when the change set
+  // carries none. Indexed with `status`, the pair the author filter matches.
   @Column({ type: "varchar", nullable: true })
   authorEmail?: string | null
 
@@ -265,6 +263,17 @@ export class ContributionEntity implements Contribution {
   // entity's own `root` (a scalar column, always loaded), so an update never
   // clears them. `rootId` is stored as text: a root id may be a string or a
   // number, and the filter compares both as the same string.
+  // The address is read from the change set whenever one is loaded, so a save
+  // that carries it cannot leave the column behind. A save without it leaves
+  // the column as it stands.
+  @BeforeInsert()
+  @BeforeUpdate()
+  syncAuthorEmail(): void {
+    if (this.changeSet) {
+      this.authorEmail = this.changeSet.authorEmail ?? null
+    }
+  }
+
   @BeforeInsert()
   @BeforeUpdate()
   syncRootColumns(): void {
@@ -474,13 +483,13 @@ export class DatabaseService {
     const contribution = this.contributionRepo.create({
       ...data,
       id: data.id || uuidv4(),
-      // Recomputed on every save so it tracks the ship as the changeSet is
-      // edited; null when the change tree names no ship.
-      // (rootSchema / rootId are filled from `root` by the entity's
-      // BeforeInsert/BeforeUpdate hook, so they need no assignment here.)
+      // Read from the changeSet on every save, so they track it as it is
+      // edited. `shipName` and `nationality` are null when the change tree
+      // names no ship.
+      // (rootSchema / rootId are filled from `root`, and authorEmail from the
+      // changeSet, by the entity's BeforeInsert/BeforeUpdate hooks.)
       shipName: extractShipName(data.changeSet),
-      nationality: extractNationality(data.changeSet),
-      authorEmail: data.changeSet?.authorEmail ?? null
+      nationality: extractNationality(data.changeSet)
     } as ContributionEntity)
     return this.contributionRepo.save(contribution)
   }
@@ -630,14 +639,13 @@ export class DatabaseService {
       }
     }
 
-    // Matched whole, off the contribution's own address column. Both sides are
-    // lowercased where a token is read, so no SQL folding is applied on top.
+    // Matched whole against the address column. Both values are lowercased
+    // already, so the comparison applies no folding of its own.
     if (author) {
       where.authorEmail = author
     }
 
-    // The date range lives on the changeSet, so it is built as a nested clause
-    // -- a where holds a single condition per relation.
+    // The date range lives on the changeSet, so it goes in a nested clause.
     const changeSetWhere: any = {}
     // Date range on the changeSet timestamp -- the same value the Date column
     // shows and `sortBy: "timestamp"` orders by. Open-ended on either side.
@@ -707,8 +715,8 @@ export class DatabaseService {
           )
         } else if (searchSensitiveScope.ownEmail) {
           b.orWhere(
-            "contribution.authorEmail = :searchOwn AND contribution.changeSetId IN " +
-              `(SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
+            "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
+              `cs.authorEmail = :searchOwn AND (${sensitive}))`,
             { searchTerm: term, searchOwn: searchSensitiveScope.ownEmail }
           )
         }
