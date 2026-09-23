@@ -152,3 +152,68 @@ test("the changeset author email is split out of the author, indexed, and folded
     await runner.release()
   }
 })
+
+test("a contribution carries the address of its change set, indexed with the status", async () => {
+  await AppDataSource.runMigrations({ transaction: "all" })
+  const migration = AllMigrations.map((m) => new m()).find(
+    (m) => (m as { name?: string }).name === "ContributionAuthorEmail1786800000000"
+  )!
+  const indexes = async (): Promise<string[]> =>
+    (await AppDataSource.query("PRAGMA index_list(contributions)"))
+      .map((index: { name: string }) => index.name)
+      .filter((name: string) => name === "IDX_contributions_authorEmail_status")
+  const addresses = async (): Promise<Record<string, string>> =>
+    Object.fromEntries(
+      (
+        await AppDataSource.query(
+          "SELECT id, authorEmail FROM contributions WHERE id LIKE 'mig-%' ORDER BY id"
+        )
+      ).map((row: { id: string; authorEmail: string | null }) => [
+        row.id,
+        row.authorEmail ?? "(none)"
+      ])
+    )
+
+  const runner = AppDataSource.createQueryRunner()
+  try {
+    await migration.down(runner)
+    expect(await indexes()).toEqual([])
+
+    // Rows written before the column existed: one change set with an address,
+    // one without.
+    await AppDataSource.query(
+      "INSERT INTO changesets (id, author, authorEmail, title, comments, timestamp, changes)" +
+        " VALUES ('mig-cs-1', 'Jane Doe', 'j@x.com', 't', '', 0, '[]')," +
+        " ('mig-cs-2', 'CSV importer script', NULL, 't', '', 0, '[]')"
+    )
+    for (const [id, changeSetId] of [
+      ["mig-1", "mig-cs-1"],
+      ["mig-2", "mig-cs-2"]
+    ]) {
+      await AppDataSource.query(
+        "INSERT INTO contributions (id, root, status, changeSetId) VALUES (?, '{}', 0, ?)",
+        [id, changeSetId]
+      )
+    }
+
+    await migration.up(runner)
+    await migration.up(runner)
+    expect(await addresses()).toEqual({ "mig-1": "j@x.com", "mig-2": "(none)" })
+    expect(await indexes()).toEqual(["IDX_contributions_authorEmail_status"])
+
+    await migration.down(runner)
+    await migration.down(runner)
+    expect(await indexes()).toEqual([])
+    expect(
+      (
+        await AppDataSource.query(
+          "SELECT COUNT(*) AS n FROM pragma_table_info('contributions') WHERE name = 'authorEmail'"
+        )
+      )[0].n
+    ).toBe(0)
+
+    await migration.up(runner)
+  } finally {
+    await runner.release()
+  }
+})

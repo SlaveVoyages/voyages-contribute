@@ -229,6 +229,14 @@ export class ContributionEntity implements Contribution {
   @Column({ type: "varchar", nullable: true })
   nationality?: string | null
 
+  // The author's address, copied from the changeSet on write (see
+  // createContribution). Indexed with `status` so a contributor's own list
+  // reads one index, in id order, without joining the change set. Null where
+  // the change set carries no address.
+  @Index("IDX_contributions_authorEmail_status", ["authorEmail", "status"])
+  @Column({ type: "varchar", nullable: true })
+  authorEmail?: string | null
+
   @OneToMany(() => ReviewEntity, (review) => review.contribution, {
     cascade: true
   })
@@ -471,7 +479,8 @@ export class DatabaseService {
       // (rootSchema / rootId are filled from `root` by the entity's
       // BeforeInsert/BeforeUpdate hook, so they need no assignment here.)
       shipName: extractShipName(data.changeSet),
-      nationality: extractNationality(data.changeSet)
+      nationality: extractNationality(data.changeSet),
+      authorEmail: data.changeSet?.authorEmail ?? null
     } as ContributionEntity)
     return this.contributionRepo.save(contribution)
   }
@@ -621,15 +630,15 @@ export class DatabaseService {
       }
     }
 
-    // Matched whole, off the authorEmail index. Both sides are lowercased
-    // where a token is read, so no SQL folding is applied on top.
-    //
-    // Author and the date range both live on the changeSet, so they are built
-    // into one nested clause -- a where holds a single condition per relation.
-    const changeSetWhere: any = {}
+    // Matched whole, off the contribution's own address column. Both sides are
+    // lowercased where a token is read, so no SQL folding is applied on top.
     if (author) {
-      changeSetWhere.authorEmail = author
+      where.authorEmail = author
     }
+
+    // The date range lives on the changeSet, so it is built as a nested clause
+    // -- a where holds a single condition per relation.
+    const changeSetWhere: any = {}
     // Date range on the changeSet timestamp -- the same value the Date column
     // shows and `sortBy: "timestamp"` orders by. Open-ended on either side.
     if (dateFrom !== undefined && dateTo !== undefined) {
@@ -698,8 +707,8 @@ export class DatabaseService {
           )
         } else if (searchSensitiveScope.ownEmail) {
           b.orWhere(
-            "contribution.changeSetId IN (SELECT cs.id FROM changesets cs WHERE " +
-              `cs.authorEmail = :searchOwn AND (${sensitive}))`,
+            "contribution.authorEmail = :searchOwn AND contribution.changeSetId IN " +
+              `(SELECT cs.id FROM changesets cs WHERE ${sensitive})`,
             { searchTerm: term, searchOwn: searchSensitiveScope.ownEmail }
           )
         }

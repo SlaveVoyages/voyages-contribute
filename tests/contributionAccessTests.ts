@@ -208,18 +208,18 @@ test("an author owns their work by the email recorded with it, whatever name sit
     { author: "CSV importer script", authorEmail: null }
   ]
   for (const [index, { author, authorEmail }] of stored.entries()) {
-    const changeSet = await AppDataSource.manager.save(ChangeSetEntity, {
-      author,
-      authorEmail,
-      title: "t",
-      comments: "",
-      timestamp: 0,
-      changes: []
-    })
-    await AppDataSource.manager.save(ContributionEntity, {
+    await service.createContribution({
       id: `author-${index}`,
       root: { type: "existing", schema: "Voyage", id: 900000 + index },
-      changeSet,
+      changeSet: {
+        id: `cs-author-${index}`,
+        author,
+        authorEmail,
+        title: "t",
+        comments: "",
+        timestamp: 0,
+        changes: []
+      },
       status: ContributionStatus.WorkInProgress
     })
   }
