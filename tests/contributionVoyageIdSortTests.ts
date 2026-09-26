@@ -169,3 +169,43 @@ test("the migration backfills the sort key from change sets and reviews", async 
   expect(String(await keyOf("new-in-review"))).toBe("962255")
   expect(await keyOf("new-unassigned")).toBeNull()
 })
+
+test("a non-numeric shown id keeps a null sort key, on review and on later saves", async () => {
+  const keyOf = async (id: string) =>
+    (await AppDataSource.manager.findOneBy(ContributionEntity, { id }))
+      ?.voyageIdNum
+
+  // A review assigning an id that is not a whole number: the column now shows
+  // it, so the old numeric key must not stand.
+  const root = await newVoyage("review-non-numeric", 962260)
+  expect(String(await keyOf("review-non-numeric"))).toBe("962260")
+  await service.addReviewToContribution("review-non-numeric", {
+    ...changeSetOf([]),
+    changes: [assignId(root, "V-12")] as never
+  })
+  expect(await keyOf("review-non-numeric")).toBeNull()
+
+  // An existing voyage (numeric root) shown under a non-numeric id: an
+  // explicit null, which a later save must not replace with the root id.
+  await service.createContribution({
+    id: "existing-non-numeric",
+    root: { type: "existing", schema: "Voyage", id: 777 },
+    changeSet: changeSetOf([
+      {
+        type: "update",
+        entityRef: { id: 777, schema: "Voyage", type: "existing" },
+        changes: [
+          { kind: "direct", property: "Voyage_voyage_id", changed: "V-777" }
+        ]
+      }
+    ]) as never,
+    status: ContributionStatus.WorkInProgress
+  })
+  expect(await keyOf("existing-non-numeric")).toBeNull()
+  const loaded = (await AppDataSource.manager.findOneBy(ContributionEntity, {
+    id: "existing-non-numeric"
+  }))!
+  loaded.status = ContributionStatus.Submitted
+  await AppDataSource.manager.save(loaded)
+  expect(await keyOf("existing-non-numeric")).toBeNull()
+})

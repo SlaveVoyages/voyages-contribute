@@ -297,8 +297,9 @@ export class ContributionEntity implements Contribution {
     this.rootIdNum = id != null && /^-?\d+$/.test(String(id)) ? String(id) : null
     // Only a default: the assigned voyage id is set explicitly where changes
     // are written, and a save that did not load the change sets must not
-    // replace it with the root id.
-    if (this.voyageIdNum == null) {
+    // replace it with the root id. `null` is a value here -- the shown id is
+    // not a whole number -- so only an omitted key takes the default.
+    if (this.voyageIdNum === undefined) {
       this.voyageIdNum = this.rootIdNum
     }
   }
@@ -940,14 +941,16 @@ export class DatabaseService {
       await manager.save(ReviewEntity, reviewEntity)
 
       // A review is stacked on top, so a voyage id it assigns is now the one
-      // the Voyage ID column shows; keep its sort key in step (DD-0532). A
-      // review that assigns none leaves the key as it was.
-      const assigned = wholeNumberOrNull(
-        lastAssignedVoyageId(contribution.root?.id, [savedChangeSet])
-      )
-      if (assigned !== null) {
+      // the Voyage ID column shows; keep its sort key in step (DD-0532) --
+      // null when that id is not a whole number, rather than keeping a key for
+      // an id the column no longer shows. A review that assigns none leaves
+      // the key as it was.
+      const assigned = lastAssignedVoyageId(contribution.root?.id, [
+        savedChangeSet
+      ])
+      if (assigned !== undefined) {
         await manager.update(ContributionEntity, contributionId, {
-          voyageIdNum: assigned
+          voyageIdNum: wholeNumberOrNull(assigned)
         })
       }
 
