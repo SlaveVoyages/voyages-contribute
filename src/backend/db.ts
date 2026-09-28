@@ -29,6 +29,7 @@ import type { EntityChange, EntityRef } from "../models/changeSets"
 import { AllMigrations } from "./migrations/1786100000000-InitialSchema"
 import { extractNationality } from "./nationality"
 import { extractShipName } from "./shipName"
+import { lastAssignedVoyageId, voyageIdSortKey, wholeNumberOrNull } from "./voyageId"
 import {
   BatchWithCounts,
   ChangeSet,
@@ -199,6 +200,17 @@ export class ContributionEntity implements Contribution {
   @Column({ type: "bigint", nullable: true })
   rootIdNum?: string | null
 
+  // The voyage id the list's Voyage ID column shows, as a number, for ordering
+  // by it (DD-0532). A new voyage's root id is a uuid handle, so `rootIdNum` is
+  // null for every one of them -- imported batches included -- while the
+  // column shows the id an editor assigned, recorded in a change (often in a
+  // review). This holds that assigned id, or the root id when none is
+  // assigned: kept on write by createContribution and addReviewToContribution,
+  // and defaulted to `rootIdNum` by the hook below for any other insert.
+  @Index()
+  @Column({ type: "bigint", nullable: true })
+  voyageIdNum?: string | null
+
   @ManyToOne(() => ChangeSetEntity, {
     cascade: true,
     onDelete: "CASCADE",
@@ -283,6 +295,13 @@ export class ContributionEntity implements Contribution {
     // Kept as a string so a large id survives without float rounding; the bigint
     // column orders it numerically. Only a whole number qualifies.
     this.rootIdNum = id != null && /^-?\d+$/.test(String(id)) ? String(id) : null
+    // Only a default: the assigned voyage id is set explicitly where changes
+    // are written, and a save that did not load the change sets must not
+    // replace it with the root id. `null` is a value here -- the shown id is
+    // not a whole number -- so only an omitted key takes the default.
+    if (this.voyageIdNum === undefined) {
+      this.voyageIdNum = this.rootIdNum
+    }
   }
 }
 
@@ -390,10 +409,10 @@ const applyOrderToQueryBuilder = (
     qb.addSelect(sql, "list_sort_key").orderBy("list_sort_key", sortOrder)
   switch (sortBy) {
     case "voyage_id":
-      // The voyage id is denormalised onto the indexed `rootIdNum` column, so it
-      // orders numerically off an index rather than by extracting it from the
-      // `root` JSON on every row.
-      qb.orderBy("contribution.rootIdNum", sortOrder)
+      // The voyage id the column shows -- assigned, else the root's -- is
+      // denormalised onto the indexed `voyageIdNum` column, so it orders
+      // numerically off an index. `rootIdNum` is null for every new voyage.
+      qb.orderBy("contribution.voyageIdNum", sortOrder)
       break
     case "author":
       orderBySubquery(
@@ -489,7 +508,15 @@ export class DatabaseService {
       // (rootSchema / rootId are filled from `root`, and authorEmail from the
       // changeSet, by the entity's BeforeInsert/BeforeUpdate hooks.)
       shipName: extractShipName(data.changeSet),
-      nationality: extractNationality(data.changeSet)
+      nationality: extractNationality(data.changeSet),
+      // What the Voyage ID column shows, so it sorts the way it reads. Reviews
+      // are read in stack order when the caller carries any.
+      voyageIdNum: voyageIdSortKey(data.root, [
+        data.changeSet,
+        ...[...(data.reviews ?? [])]
+          .sort((a, b) => a.stackOrder - b.stackOrder)
+          .map((r) => r.changeSet)
+      ])
     } as ContributionEntity)
     return this.contributionRepo.save(contribution)
   }
@@ -912,6 +939,20 @@ export class DatabaseService {
       reviewEntity.contribution = contribution
 
       await manager.save(ReviewEntity, reviewEntity)
+
+      // A review is stacked on top, so a voyage id it assigns is now the one
+      // the Voyage ID column shows; keep its sort key in step (DD-0532) --
+      // null when that id is not a whole number, rather than keeping a key for
+      // an id the column no longer shows. A review that assigns none leaves
+      // the key as it was.
+      const assigned = lastAssignedVoyageId(contribution.root?.id, [
+        savedChangeSet
+      ])
+      if (assigned !== undefined) {
+        await manager.update(ContributionEntity, contributionId, {
+          voyageIdNum: wholeNumberOrNull(assigned)
+        })
+      }
 
       // 5. Return the updated contribution with all relations
       return await getFullContribution(manager, contributionId)

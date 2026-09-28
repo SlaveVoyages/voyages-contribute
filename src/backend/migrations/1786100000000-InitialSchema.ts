@@ -7,6 +7,7 @@ import { ContributionNationality1786500000000 } from "./1786500000000-Contributi
 import { ContributionRootColumnsAndIndexes1786600000000 } from "./1786600000000-ContributionRootColumnsAndIndexes"
 import { ChangeSetAuthorEmailAndTimestampIndex1786700000000 } from "./1786700000000-ChangeSetAuthorEmailAndTimestampIndex"
 import { ContributionAuthorEmail1786800000000 } from "./1786800000000-ContributionAuthorEmail"
+import { ContributionVoyageIdNum1786900000000 } from "./1786900000000-ContributionVoyageIdNum"
 
 /**
  * The schema as it stood when migrations were introduced, reproducing what
@@ -180,5 +181,6 @@ export const AllMigrations = [
   ContributionNationality1786500000000,
   ContributionRootColumnsAndIndexes1786600000000,
   ChangeSetAuthorEmailAndTimestampIndex1786700000000,
-  ContributionAuthorEmail1786800000000
+  ContributionAuthorEmail1786800000000,
+  ContributionVoyageIdNum1786900000000
 ]
