@@ -471,7 +471,69 @@ const cloneEntityChange = <TChange extends EntityChange>(
 type ExtPropertyChange = PropertyChange &
   ForeignKeyIndicator & {
     combined?: boolean
+    /** On the FK a link writes: the linked entity's key, or null if cleared. */
+    linkTarget?: string | null
+    /** On the FK an owned entity carries: its owner's key. */
+    ownerRef?: string
   }
+
+/** An entity's identity: type, schema and id together. */
+const entityKey = (ref: EntityRef) => `${ref.type}:${ref.schema}:${ref.id}`
+
+/**
+ * Removes new linked entities that no link points at any more (replaced or
+ * cleared), with the entities they own. Repeats until nothing changes.
+ */
+const pruneReplacedNewLinks = (
+  merged: Record<string, EntityUpdate<DirectPropertyChange>>,
+  linkedNew: Map<string, string>
+) => {
+  if (linkedNew.size === 0) {
+    return
+  }
+  const dropped: Set<string> = new Set()
+  const droppedKeys: Set<string> = new Set()
+  const drop = (key: string) => {
+    dropped.add(key)
+    droppedKeys.add(entityKey(merged[key].entityRef))
+  }
+  for (let changed = true; changed; ) {
+    changed = false
+    // The last value of each link is the one that stands.
+    const referenced: Set<string> = new Set()
+    for (const [key, u] of Object.entries(merged)) {
+      if (dropped.has(key)) continue
+      const last: Map<string, string | null> = new Map()
+      for (const c of u.changes as ExtPropertyChange[]) {
+        if (c.linkTarget !== undefined) {
+          last.set(c.property, c.linkTarget)
+        }
+      }
+      for (const target of last.values()) {
+        if (target) referenced.add(target)
+      }
+    }
+    for (const [key, target] of linkedNew) {
+      if (merged[key] && !dropped.has(key) && !referenced.has(target)) {
+        drop(key)
+        changed = true
+      }
+    }
+    for (const [key, u] of Object.entries(merged)) {
+      if (dropped.has(key)) continue
+      const owned = (u.changes as ExtPropertyChange[]).some(
+        (c) => c.ownerRef !== undefined && droppedKeys.has(c.ownerRef)
+      )
+      if (owned) {
+        drop(key)
+        changed = true
+      }
+    }
+  }
+  for (const key of dropped) {
+    delete merged[key]
+  }
+}
 
 /**
  * Combine an ordered sequence of changes into a flat list of deletes and
@@ -484,6 +546,8 @@ export const combineChanges = (
   const deletedEntries: Ordered<EntityDelete>[] = []
   const undeletedEntries: Ordered<EntityUndelete>[] = []
   const updatedEntries: Ordered<EntityUpdate>[] = []
+  // New entities created through a link: mergedUpdates key -> entityKey.
+  const linkedNew: Map<string, string> = new Map()
   let order = 0
   for (const change of allChanges) {
     ++order
@@ -519,9 +583,10 @@ export const combineChanges = (
           property: prop.oneToOneBackingField,
           changed: u.entityRef.id,
           isForeignKey: true,
+          ownerRef: entityKey(u.entityRef),
           comments: uc.comments,
           combined: true
-        })
+        } as ExtPropertyChange)
         updatedEntries.push({
           type: "update" as const,
           changes: ownedChanges,
@@ -548,8 +613,9 @@ export const combineChanges = (
             kind: "direct" as const,
             property: childProp.uid,
             changed: u.entityRef.id,
-            isForeignKey: true
-          })
+            isForeignKey: true,
+            ownerRef: entityKey(u.entityRef)
+          } as ExtPropertyChange)
           updatedEntries.push({
             type: "update" as const,
             changes: ownedChanges,
@@ -570,13 +636,20 @@ export const combineChanges = (
               changed: uc.changed?.entityRef.id ?? null,
               comments: uc.comments,
               combined: true,
-              isForeignKey: true
+              isForeignKey: true,
+              linkTarget: uc.changed ? entityKey(uc.changed.entityRef) : null
             } as ExtPropertyChange
           ],
           entityRef: u.entityRef,
           order
         })
         // Generate an update/insert for the changed object.
+        if (uc.changed?.entityRef.type === "new") {
+          linkedNew.set(
+            `${uc.changed.entityRef.schema}_${uc.changed.entityRef.id}`,
+            entityKey(uc.changed.entityRef)
+          )
+        }
         if (
           uc.changed &&
           (uc.linkedChanges || uc.changed.entityRef.type === "new")
@@ -694,6 +767,7 @@ export const combineChanges = (
     }
     mergedUpdates[id] = { ...u, changes }
   }
+  pruneReplacedNewLinks(mergedUpdates, linkedNew)
   // Keep a cleaned, minimal object to encode the direct updates.
   const cleanedUpdates: CombinedChangeSet["updates"] = Object.values(
     mergedUpdates

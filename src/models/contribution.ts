@@ -121,14 +121,27 @@ export interface ContributionViewModel {
 }
 
 /**
+ * Changes that target the contribution's root by schema and id, but under a
+ * different type, are treated as changes to the root.
+ */
+const alignRootType = (root: EntityRef, change: EntityChange): EntityChange =>
+  change.entityRef.schema === root.schema &&
+  String(change.entityRef.id) === String(root.id) &&
+  change.entityRef.type !== root.type
+    ? { ...change, entityRef: { ...change.entityRef, type: root.type } }
+    : change
+
+/**
  * Combine all the changes of a contribution, starting with the original and
  * applying all editorial review changes on top in the correct order.
  */
 export const combineContributionChanges = (contrib: Contribution) => {
   const sorted = [...contrib.reviews]
   sorted.sort((a, b) => a.stackOrder - b.stackOrder)
-  return combineChanges([
-    ...contrib.changeSet.changes,
-    ...sorted.map((r) => r.changeSet.changes).flat()
-  ])
+  return combineChanges(
+    [
+      ...contrib.changeSet.changes,
+      ...sorted.map((r) => r.changeSet.changes).flat()
+    ].map((c) => alignRootType(contrib.root, c))
+  )
 }

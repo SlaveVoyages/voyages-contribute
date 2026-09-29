@@ -205,3 +205,44 @@ test("rejecting is never blocked by what the contribution is missing", () => {
     ).toBeNull()
   }
 })
+
+/**
+ * A review that addresses the existing root under type "new" is read as the
+ * root, so an existing voyage is not asked for a new voyage's Voyage ID.
+ */
+test("a review addressing the existing root as new is read as the root", () => {
+  const root = { type: "existing" as const, schema: "Voyage", id: 191766 }
+  const changeSet = (changes: unknown[]) => ({
+    author: "editor@example.org",
+    title: "",
+    comments: "",
+    timestamp: 0,
+    changes
+  })
+  const contribution = {
+    id: "root-type",
+    root,
+    status: Submitted,
+    changeSet: changeSet([]),
+    reviews: [
+      {
+        stackOrder: 1,
+        changeSet: changeSet([
+          {
+            type: "update",
+            entityRef: { ...root, type: "new" },
+            changes: [
+              { kind: "direct", property: "Voyage_dataset", changed: "1" }
+            ]
+          }
+        ])
+      }
+    ]
+  } as unknown as Contribution
+
+  const refusal = checkSubmissionReadiness(contribution, Accepted)
+  expect(
+    refusal?.validation.filter((v) => /Voyage ID|Dataset/.test(v.message)) ??
+      []
+  ).toEqual([])
+})
