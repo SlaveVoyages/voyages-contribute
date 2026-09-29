@@ -121,21 +121,8 @@ export interface ContributionViewModel {
 }
 
 /**
- * Combine all the changes of a contribution, starting with the original and
- * applying all editorial review changes on top in the correct order.
- */
-/**
- * A change aimed at the contribution's own root entity, but carrying a
- * different type for it, is read as the root: same schema and id is the same
- * entity.
- *
- * A form that failed to load an existing voyage used to fall back to a blank
- * *new* one under the same id, so reviews saved then address
- * `new:Voyage:191766` while the contribution is about `existing:Voyage:191766`.
- * Merged, the voyage then read as new -- demanding a Voyage ID and dataset of
- * an existing voyage, and blocking acceptance even after an editor entered
- * them (DD-0559). The frontend no longer writes such changes; this reads the
- * ones already stored correctly.
+ * Changes that target the contribution's root by schema and id, but under a
+ * different type, are treated as changes to the root.
  */
 const alignRootType = (root: EntityRef, change: EntityChange): EntityChange =>
   change.entityRef.schema === root.schema &&
@@ -144,6 +131,10 @@ const alignRootType = (root: EntityRef, change: EntityChange): EntityChange =>
     ? { ...change, entityRef: { ...change.entityRef, type: root.type } }
     : change
 
+/**
+ * Combine all the changes of a contribution, starting with the original and
+ * applying all editorial review changes on top in the correct order.
+ */
 export const combineContributionChanges = (contrib: Contribution) => {
   const sorted = [...contrib.reviews]
   sorted.sort((a, b) => a.stackOrder - b.stackOrder)

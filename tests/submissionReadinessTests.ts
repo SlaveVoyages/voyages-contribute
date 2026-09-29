@@ -207,10 +207,8 @@ test("rejecting is never blocked by what the contribution is missing", () => {
 })
 
 /**
- * An existing voyage whose review was saved against the same id as a *new*
- * voyage -- what a form that failed to load the voyage used to write (DD-0559,
- * contribution 191766). It is the same voyage, so accepting it must not ask
- * for the Voyage ID and dataset a new voyage needs.
+ * A review that addresses the existing root under type "new" is read as the
+ * root, so an existing voyage is not asked for a new voyage's Voyage ID.
  */
 test("a review addressing the existing root as new is read as the root", () => {
   const root = { type: "existing" as const, schema: "Voyage", id: 191766 }
@@ -222,7 +220,7 @@ test("a review addressing the existing root as new is read as the root", () => {
     changes
   })
   const contribution = {
-    id: "dd-0559",
+    id: "root-type",
     root,
     status: Submitted,
     changeSet: changeSet([]),

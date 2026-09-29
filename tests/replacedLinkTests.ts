@@ -9,12 +9,8 @@ import {
 import { getSchema } from "../src/models/entities"
 
 /**
- * A new entity created through a link is published only while some link
- * still points at it (DD-0559). Replacing or clearing the link -- a review
- * picking another source, another short reference -- used to leave the
- * earlier new entity queued, validated (so a replaced source still had to
- * have a short reference) and published. What it owns goes with it; what is
- * still linked, for every field that can create an entity, stays.
+ * combineChanges keeps a new entity created through a link only while some
+ * link still points at it, and removes what it owns along with it.
  */
 
 const uid = (schema: string, label: string) => {
@@ -171,7 +167,7 @@ test("a replaced new source takes its new date with it", () => {
   expect(ids).not.toContain("date-old")
 })
 
-test("acceptance checks only the source the connection ends with (191766)", () => {
+test("acceptance checks only the source the connection ends with", () => {
   const titled = (n: string): PropertyChange[] => [
     direct("Voyage Source", "Title", `Source ${n}`)
   ]
@@ -184,4 +180,33 @@ test("acceptance checks only the source the connection ends with (191766)", () =
   ])
   const { validation } = foldCombinedChanges([{ ...combined, label: "191766" }])
   expect(validation.filter((v) => /Short reference/.test(v.message))).toEqual([])
+})
+
+test("entities are matched by type, schema and id, not id alone", () => {
+  // The replaced source and the kept short reference share an id.
+  const ids = combineChanges([
+    link(
+      CONNECTION,
+      "Voyage Source Connection",
+      "Source",
+      ref("Voyage Source", "shared")
+    ),
+    link(
+      CONNECTION,
+      "Voyage Source Connection",
+      "Source",
+      ref("Voyage Source", "src-kept"),
+      [
+        {
+          kind: "linked",
+          property: uid("Voyage Source", "Short reference"),
+          changed: entity(ref("Voyage Source Short Reference", "shared")),
+          linkedChanges: []
+        } as PropertyChange
+      ]
+    )
+  ]).updates.map((u) => `${u.entityRef.schema}:${u.entityRef.id}`)
+  expect(ids).toContain("Voyage Source Short Reference:shared")
+  expect(ids).toContain("Voyage Source:src-kept")
+  expect(ids).not.toContain("Voyage Source:shared")
 })
