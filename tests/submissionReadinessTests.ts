@@ -205,3 +205,46 @@ test("rejecting is never blocked by what the contribution is missing", () => {
     ).toBeNull()
   }
 })
+
+/**
+ * An existing voyage whose review was saved against the same id as a *new*
+ * voyage -- what a form that failed to load the voyage used to write (DD-0559,
+ * contribution 191766). It is the same voyage, so accepting it must not ask
+ * for the Voyage ID and dataset a new voyage needs.
+ */
+test("a review addressing the existing root as new is read as the root", () => {
+  const root = { type: "existing" as const, schema: "Voyage", id: 191766 }
+  const changeSet = (changes: unknown[]) => ({
+    author: "editor@example.org",
+    title: "",
+    comments: "",
+    timestamp: 0,
+    changes
+  })
+  const contribution = {
+    id: "dd-0559",
+    root,
+    status: Submitted,
+    changeSet: changeSet([]),
+    reviews: [
+      {
+        stackOrder: 1,
+        changeSet: changeSet([
+          {
+            type: "update",
+            entityRef: { ...root, type: "new" },
+            changes: [
+              { kind: "direct", property: "Voyage_dataset", changed: "1" }
+            ]
+          }
+        ])
+      }
+    ]
+  } as unknown as Contribution
+
+  const refusal = checkSubmissionReadiness(contribution, Accepted)
+  expect(
+    refusal?.validation.filter((v) => /Voyage ID|Dataset/.test(v.message)) ??
+      []
+  ).toEqual([])
+})
