@@ -783,6 +783,26 @@ export const combineChanges = (
       }
     }
   }
+  // A deleted new entity takes the new entities it owns with it.
+  const gone = new Set(
+    deletedEntries
+      .filter((d) => d.entityRef.type === "new")
+      .map((d) => entityKey(d.entityRef))
+  )
+  for (let changed = gone.size > 0; changed; ) {
+    changed = false
+    for (let j = updatedEntries.length - 1; j >= 0; --j) {
+      const u = updatedEntries[j]
+      const owned = (u.changes as ExtPropertyChange[]).some(
+        (c) => c.ownerRef !== undefined && gone.has(c.ownerRef)
+      )
+      if (owned) {
+        gone.add(entityKey(u.entityRef))
+        updatedEntries.splice(j, 1)
+        changed = true
+      }
+    }
+  }
   // We next merge the updates so that all changes to a given entity appear in
   // a single update.
   const mergedUpdates: Record<string, EntityUpdate<DirectPropertyChange>> = {}
