@@ -1243,7 +1243,17 @@ export const EnslaverAliasBuilder = mkBuilder({
   accessLevel: PropertyAccessLevel.BeginnerContributor
 })
 
-export const EnslaverAliasSchema = EnslaverAliasBuilder.build()
+// The variants below point at the identity themselves, so they are cloned
+// before the owner property is added.
+const EnslaverAliasWithFKBuilder = EnslaverAliasBuilder.clone(
+  "EnslaverAliasWithFK"
+)
+const EnslaverAliasWithIdentityBuilder = EnslaverAliasBuilder.clone(
+  "EnslaverAliasWithIdentity"
+)
+
+export const EnslaverAliasSchema =
+  EnslaverAliasBuilder.addOwnerProp("identity_id").build()
 
 export const EnslaverSchema = mkBuilder({
   name: "Enslaver",
@@ -1361,9 +1371,7 @@ export const EnslaverSchema = mkBuilder({
   })
   .build()
 
-export const EnslaverAliasWithFKSchema = EnslaverAliasBuilder.clone(
-  "EnslaverAliasWithFK"
-)
+export const EnslaverAliasWithFKSchema = EnslaverAliasWithFKBuilder
   .addNumber({
     backingField: "identity_id",
     label: "IdentityId"
@@ -1375,9 +1383,7 @@ export const EnslaverAliasWithFKSchema = EnslaverAliasBuilder.clone(
  * schema for EnslaverAlias which points to an Enslaver identity which then
  * points to the schema that doesn't point back to the identity.
  */
-export const EnslaverAliasWithIdentitySchema = EnslaverAliasBuilder.clone(
-  "EnslaverAliasWithIdentity"
-)
+export const EnslaverAliasWithIdentitySchema = EnslaverAliasWithIdentityBuilder
   .addLinkedEntity({
     backingField: "identity_id",
     linkedEntitySchema: EnslaverSchema,
