@@ -121,3 +121,33 @@ test("linkedChanges, when present, are used instead of the data", () => {
   // An explicit empty list is kept as "no fields".
   expect(written(fold(source, []), "src-1")).toEqual([])
 })
+
+test("an owned date in the data is written with the source", () => {
+  const result = fold(
+    newEntity("Voyage Source", "src-1", {
+      Title: "T",
+      Date: newEntity("VoyageSparseDate", "date-1", {
+        Year: 1790,
+        Month: null,
+        Day: null
+      })
+    })
+  )
+  expect(written(result, "src-1")).toContainEqual(["date_id", "date-1"])
+  expect(written(result, "date-1")).toContainEqual(["year", 1790])
+})
+
+test("an owned date with no values is not written", () => {
+  const result = fold(
+    newEntity("Voyage Source", "src-1", {
+      Title: "T",
+      Date: newEntity("VoyageSparseDate", "date-1", {
+        Year: null,
+        Month: null,
+        Day: null
+      })
+    })
+  )
+  expect(written(result, "src-1").map(([p]) => p)).not.toContain("date_id")
+  expect(written(result, "date-1")).toEqual([])
+})

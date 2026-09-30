@@ -159,3 +159,15 @@ test("the rows a removed new row owns go with it", () => {
   expect(updatedIds(after)).toEqual(["v1"])
   expect(after.deletions).toEqual([])
 })
+
+test("purged rows are removed like any other removed row", () => {
+  const dropped = newRow("dropped")
+  const removal = sources([], [dropped.entityRef])
+  const purged: EntityChange = {
+    ...removal,
+    changes: [{ ...removal.changes[0], purged: [dropped.entityRef] } as never]
+  }
+  const combined = combine([sources([{ row: dropped }])], [purged])
+  expect(updatedIds(combined)).toEqual(["v1"])
+  expect(combined.deletions).toEqual([])
+})

@@ -105,6 +105,11 @@ export interface ListChangeBase extends PropertyChangeBase {
    * A list of refs to list elements that should be removed.
    */
   removed: EntityRef[]
+  /**
+   * Removed elements the list no longer shows ("deleted forever"). Display
+   * only: removal is decided by `removed`.
+   */
+  purged?: EntityRef[]
 }
 
 export interface OwnedEntityListChange extends ListChangeBase {
@@ -443,6 +448,7 @@ const clonePropChange = <TProp extends PropertyChange>(c: TProp): TProp => {
     return {
       ...c,
       removed: c.removed.map((r) => ({ ...r })),
+      purged: c.purged?.map((r) => ({ ...r })),
       modified: c.modified.map((m) => ({
         ...m,
         ownedEntity: cloneEntity(m.ownedEntity),
@@ -483,7 +489,8 @@ const entityKey = (ref: EntityRef) => `${ref.type}:${ref.schema}:${ref.id}`
 
 /**
  * The property changes a new entity's data stands for: its direct values and
- * its links to other entities. Owned entities are not included.
+ * its links to other entities, an owned one (such as a date) only when it holds
+ * a value. Owned entity lists are not included.
  */
 const changesFromData = (entity: MaterializedEntity): PropertyChange[] => {
   const changes: PropertyChange[] = []
@@ -497,9 +504,14 @@ const changesFromData = (entity: MaterializedEntity): PropertyChange[] => {
           changed: value as PropertyValue
         })
       }
-    } else if (p.kind === "linkedEntity" && p.mode !== EntityLinkEditMode.Own) {
+    } else if (p.kind === "linkedEntity") {
       const value = entity.data[p.label]
-      if (isMaterializedEntity(value)) {
+      const empty =
+        p.mode === EntityLinkEditMode.Own &&
+        isMaterializedEntity(value) &&
+        value.entityRef.type === "new" &&
+        changesFromData(value).length === 0
+      if (isMaterializedEntity(value) && !empty) {
         changes.push({ kind: "linked", property: p.uid, changed: value })
       }
     }
@@ -882,7 +894,8 @@ const dropRefsFromChange = (
         modified: p.modified.filter(
           (m) => !matchAnyRef(m.ownedEntity.entityRef, refs)
         ),
-        removed: p.removed.filter((r) => !matchAnyRef(r, refs))
+        removed: p.removed.filter((r) => !matchAnyRef(r, refs)),
+        purged: p.purged?.filter((r) => !matchAnyRef(r, refs))
       }
       return next.modified.length === 0 && next.removed.length === 0
         ? undefined
