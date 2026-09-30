@@ -9,6 +9,7 @@ import {
 } from "./materialization"
 import {
   BoolProperty,
+  EntityLinkEditMode,
   EntityOwnedProperty,
   LinkedEntityProperty,
   NumberProperty,
@@ -481,6 +482,32 @@ type ExtPropertyChange = PropertyChange &
 const entityKey = (ref: EntityRef) => `${ref.type}:${ref.schema}:${ref.id}`
 
 /**
+ * The property changes a new entity's data stands for: its direct values and
+ * its links to other entities. Owned entities are not included.
+ */
+const changesFromData = (entity: MaterializedEntity): PropertyChange[] => {
+  const changes: PropertyChange[] = []
+  for (const p of getSchema(entity.entityRef.schema).properties) {
+    if (p.kind === "text" || p.kind === "number" || p.kind === "bool") {
+      const value = entity.data[p.label]
+      if (value !== null && value !== undefined && value !== "") {
+        changes.push({
+          kind: "direct",
+          property: p.uid,
+          changed: value as PropertyValue
+        })
+      }
+    } else if (p.kind === "linkedEntity" && p.mode !== EntityLinkEditMode.Own) {
+      const value = entity.data[p.label]
+      if (isMaterializedEntity(value)) {
+        changes.push({ kind: "linked", property: p.uid, changed: value })
+      }
+    }
+  }
+  return changes
+}
+
+/**
  * Removes new linked entities that no link points at any more (replaced or
  * cleared), with the entities they own. Repeats until nothing changes.
  */
@@ -654,9 +681,10 @@ export const combineChanges = (
           uc.changed &&
           (uc.linkedChanges || uc.changed.entityRef.type === "new")
         ) {
+          // A new entity linked without linkedChanges is described by its data.
           updatedEntries.push({
             type: "update" as const,
-            changes: uc.linkedChanges ?? [],
+            changes: uc.linkedChanges ?? changesFromData(uc.changed),
             entityRef: uc.changed.entityRef,
             order
           })
