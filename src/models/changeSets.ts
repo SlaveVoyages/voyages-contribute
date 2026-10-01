@@ -9,6 +9,7 @@ import {
 } from "./materialization"
 import {
   BoolProperty,
+  EntityLinkEditMode,
   EntityOwnedProperty,
   LinkedEntityProperty,
   NumberProperty,
@@ -104,6 +105,11 @@ export interface ListChangeBase extends PropertyChangeBase {
    * A list of refs to list elements that should be removed.
    */
   removed: EntityRef[]
+  /**
+   * Removed elements the list no longer shows ("deleted forever"). Display
+   * only: removal is decided by `removed`.
+   */
+  purged?: EntityRef[]
 }
 
 export interface OwnedEntityListChange extends ListChangeBase {
@@ -442,6 +448,7 @@ const clonePropChange = <TProp extends PropertyChange>(c: TProp): TProp => {
     return {
       ...c,
       removed: c.removed.map((r) => ({ ...r })),
+      purged: c.purged?.map((r) => ({ ...r })),
       modified: c.modified.map((m) => ({
         ...m,
         ownedEntity: cloneEntity(m.ownedEntity),
@@ -479,6 +486,38 @@ type ExtPropertyChange = PropertyChange &
 
 /** An entity's identity: type, schema and id together. */
 const entityKey = (ref: EntityRef) => `${ref.type}:${ref.schema}:${ref.id}`
+
+/**
+ * The property changes a new entity's data stands for: its direct values and
+ * its links to other entities, an owned one (such as a date) only when it holds
+ * a value. Owned entity lists are not included.
+ */
+const changesFromData = (entity: MaterializedEntity): PropertyChange[] => {
+  const changes: PropertyChange[] = []
+  for (const p of getSchema(entity.entityRef.schema).properties) {
+    if (p.kind === "text" || p.kind === "number" || p.kind === "bool") {
+      const value = entity.data[p.label]
+      if (value !== null && value !== undefined && value !== "") {
+        changes.push({
+          kind: "direct",
+          property: p.uid,
+          changed: value as PropertyValue
+        })
+      }
+    } else if (p.kind === "linkedEntity") {
+      const value = entity.data[p.label]
+      const empty =
+        p.mode === EntityLinkEditMode.Own &&
+        isMaterializedEntity(value) &&
+        value.entityRef.type === "new" &&
+        changesFromData(value).length === 0
+      if (isMaterializedEntity(value) && !empty) {
+        changes.push({ kind: "linked", property: p.uid, changed: value })
+      }
+    }
+  }
+  return changes
+}
 
 /**
  * Removes new linked entities that no link points at any more (replaced or
@@ -654,9 +693,10 @@ export const combineChanges = (
           uc.changed &&
           (uc.linkedChanges || uc.changed.entityRef.type === "new")
         ) {
+          // A new entity linked without linkedChanges is described by its data.
           updatedEntries.push({
             type: "update" as const,
-            changes: uc.linkedChanges ?? [],
+            changes: uc.linkedChanges ?? changesFromData(uc.changed),
             entityRef: uc.changed.entityRef,
             order
           })
@@ -755,6 +795,26 @@ export const combineChanges = (
       }
     }
   }
+  // A deleted new entity takes the new entities it owns with it.
+  const gone = new Set(
+    deletedEntries
+      .filter((d) => d.entityRef.type === "new")
+      .map((d) => entityKey(d.entityRef))
+  )
+  for (let changed = gone.size > 0; changed; ) {
+    changed = false
+    for (let j = updatedEntries.length - 1; j >= 0; --j) {
+      const u = updatedEntries[j]
+      const owned = (u.changes as ExtPropertyChange[]).some(
+        (c) => c.ownerRef !== undefined && gone.has(c.ownerRef)
+      )
+      if (owned) {
+        gone.add(entityKey(u.entityRef))
+        updatedEntries.splice(j, 1)
+        changed = true
+      }
+    }
+  }
   // We next merge the updates so that all changes to a given entity appear in
   // a single update.
   const mergedUpdates: Record<string, EntityUpdate<DirectPropertyChange>> = {}
@@ -834,7 +894,8 @@ const dropRefsFromChange = (
         modified: p.modified.filter(
           (m) => !matchAnyRef(m.ownedEntity.entityRef, refs)
         ),
-        removed: p.removed.filter((r) => !matchAnyRef(r, refs))
+        removed: p.removed.filter((r) => !matchAnyRef(r, refs)),
+        purged: p.purged?.filter((r) => !matchAnyRef(r, refs))
       }
       return next.modified.length === 0 && next.removed.length === 0
         ? undefined

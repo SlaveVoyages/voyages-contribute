@@ -138,10 +138,15 @@ const alignRootType = (root: EntityRef, change: EntityChange): EntityChange =>
 export const combineContributionChanges = (contrib: Contribution) => {
   const sorted = [...contrib.reviews]
   sorted.sort((a, b) => a.stackOrder - b.stackOrder)
-  return combineChanges(
+  const combined = combineChanges(
     [
       ...contrib.changeSet.changes,
       ...sorted.map((r) => r.changeSet.changes).flat()
     ].map((c) => alignRootType(contrib.root, c))
   )
+  // A new entity deleted in a later layer was never stored: nothing to delete.
+  return {
+    ...combined,
+    deletions: combined.deletions.filter((d) => d.entityRef.type !== "new")
+  }
 }
