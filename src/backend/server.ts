@@ -474,6 +474,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       batchId,
       rootId,
       rootSchema,
+      voyageId: readVoyageIdParam(req.query.voyage_id),
       author,
       search,
       // An editor may match the sensitive changeSet fields on every row; a
