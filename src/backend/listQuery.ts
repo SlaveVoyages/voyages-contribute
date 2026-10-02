@@ -5,6 +5,10 @@
 export const readSearchParam = (raw: unknown): string | undefined =>
   typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined
 
+/** A whole-number Voyage ID from a list query, else nothing. */
+export const readVoyageIdParam = (raw: unknown): string | undefined =>
+  typeof raw === "string" && /^\d+$/.test(raw.trim()) ? raw.trim() : undefined
+
 /**
  * A date bound from a list query, as epoch ms. ISO strings from the panel,
  * parsed defensively so a bad value is ignored.

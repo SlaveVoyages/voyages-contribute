@@ -34,7 +34,11 @@ import {
   planBulkStatus
 } from "./statusChange"
 import { approveBatchInChunks } from "./batchApprove"
-import { readDateParam, readSearchParam } from "./listQuery"
+import {
+  readDateParam,
+  readSearchParam,
+  readVoyageIdParam
+} from "./listQuery"
 import {
   advanceApproveProgress,
   completeApproveJob,
@@ -559,6 +563,7 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
       excludeStatus,
       search: readSearchParam(req.query.search),
       searchSensitiveScope: { ownEmail: authorEmail },
+      voyageId: readVoyageIdParam(req.query.voyage_id),
       dateFrom: readDateParam(req.query.dateFrom),
       dateTo: readDateParam(req.query.dateTo)
     })
