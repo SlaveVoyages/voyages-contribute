@@ -586,6 +586,7 @@ export class DatabaseService {
       rootId?: string | number
       /** Schema of the root entity, within which its id is unique. */
       rootSchema?: string
+      voyageId?: string
       sortBy?:
         | "author"
         | "timestamp"
@@ -631,6 +632,7 @@ export class DatabaseService {
       author,
       rootId,
       rootSchema,
+      voyageId,
       sortBy = "id",
       sortOrder = "ASC",
       search,
@@ -702,6 +704,9 @@ export class DatabaseService {
     }
     if (rootId !== undefined) {
       where.rootId = String(rootId)
+    }
+    if (voyageId !== undefined) {
+      where.voyageIdNum = voyageId
     }
 
     // Calculate offset

@@ -35,6 +35,11 @@ import {
 } from "./statusChange"
 import { approveBatchInChunks } from "./batchApprove"
 import {
+  readDateParam,
+  readSearchParam,
+  readVoyageIdParam
+} from "./listQuery"
+import {
   advanceApproveProgress,
   completeApproveJob,
   createApproveJob,
@@ -439,13 +444,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
           ? requestedEmail
           : (ownEmail ?? undefined)
 
-    // Free-text search over the grid. Empty or repeated (array) values are
-    // ignored rather than 400-ing -- an empty box just means "no search".
-    const rawSearch = req.query.search
-    const search =
-      typeof rawSearch === "string" && rawSearch.trim().length > 0
-        ? rawSearch.trim()
-        : undefined
+    const search = readSearchParam(req.query.search)
 
     // Whether the caller may act on the sensitive changeSet fields: an editor
     // over every row, or a contributor over their own (author is set, and for a
@@ -456,17 +455,10 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
     // Date range on the changeSet timestamp -- a sensitive field. Applied only
     // when the caller may read it; otherwise a contributor could narrow ranges
     // against the shared listing to infer another author's hidden timestamp.
-    // ISO strings from the panel, parsed defensively so a bad value is ignored.
-    const parseDate = (name: string): number | undefined => {
-      const raw = req.query[name]
-      if (typeof raw !== "string" || raw.length === 0) {
-        return undefined
-      }
-      const ms = Date.parse(raw)
-      return Number.isFinite(ms) ? ms : undefined
-    }
-    const dateFrom = canReadSensitive ? parseDate("dateFrom") : undefined
-    const dateTo = canReadSensitive ? parseDate("dateTo") : undefined
+    const dateFrom = canReadSensitive
+      ? readDateParam(req.query.dateFrom)
+      : undefined
+    const dateTo = canReadSensitive ? readDateParam(req.query.dateTo) : undefined
 
     // An editor reads every row, so may order by any column. A contributor may
     // order by a sensitive one only when the list is narrowed to their own work
@@ -482,6 +474,7 @@ app.get("/contributions", authenticateJWT, async (req, res) => {
       batchId,
       rootId,
       rootSchema,
+      voyageId: readVoyageIdParam(req.query.voyage_id),
       author,
       search,
       // An editor may match the sensitive changeSet fields on every row; a
@@ -562,11 +555,18 @@ app.get("/contributions/wip", authenticateJWT, async (req, res) => {
     // Published unreachable.
     const status = parseStatusParam(req.query.status)
     const excludeStatus = parseStatusParam(req.query.exclude_status)
+    // Only the caller's own rows are listed, so search and the date range may
+    // match every field of them.
     const contributions = await dbService.listContributions({
       ...getPaginationArgs(req),
       author: authorEmail,
       status,
-      excludeStatus
+      excludeStatus,
+      search: readSearchParam(req.query.search),
+      searchSensitiveScope: { ownEmail: authorEmail },
+      voyageId: readVoyageIdParam(req.query.voyage_id),
+      dateFrom: readDateParam(req.query.dateFrom),
+      dateTo: readDateParam(req.query.dateTo)
     })
     res.json({
       ...contributions,

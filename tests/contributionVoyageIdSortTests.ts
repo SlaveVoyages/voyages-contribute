@@ -209,3 +209,16 @@ test("a non-numeric shown id keeps a null sort key, on review and on later saves
   await AppDataSource.manager.save(loaded)
   expect(await keyOf("existing-non-numeric")).toBeNull()
 })
+
+test("the voyage_id filter matches the Voyage ID the list shows, whole", async () => {
+  const ids = async (voyageId: string) =>
+    (await service.listContributions({ voyageId, limit: 100 })).data
+      .map((c) => c.id)
+      .sort()
+  // Assigned in a review, assigned in the change set, and an existing root.
+  expect(await ids("962255")).toEqual(["new-in-review"])
+  expect(await ids("962257")).toEqual(["new-in-changeset"])
+  expect(await ids("20")).toEqual(["existing-20"])
+  // Whole match only: 2 is not 20 or 962250.
+  expect(await ids("2")).toEqual([])
+})
