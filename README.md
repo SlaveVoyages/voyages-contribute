@@ -19,6 +19,20 @@ The server does not create or alter its own schema, so a database has to be
 migrated before it will serve. Applying migrations is idempotent, so this is
 safe to run on every deploy.
 
+### `CONTRIB_DB_TYPE`
+
+Which database to open: `sqlite` or `mysql`. There is no default, and an unset
+or unrecognized value is refused before anything connects.
+
+Defaulting it would make a misconfigured deployment quieter than a broken one.
+Sqlite creates whatever file it is pointed at, so a server that meant to reach
+MySQL comes up healthy against an empty one instead — schema intact, none of
+the data it was configured for. Failing to start says so immediately.
+
+`sqlite` reads `CONTRIB_DB_PATH`. `mysql` reads `CONTRIB_DB_HOST`,
+`CONTRIB_DB_PORT`, `CONTRIB_DB_USER`, `CONTRIB_DB_PASSWORD`, `CONTRIB_DB_NAME`,
+and `CONTRIB_DB_SSL_CA` or `CONTRIB_DB_SSL`. `.env.develop` lists them all.
+
 ### `MIGRATION_MODE`
 
 What a starting server does about a schema that is behind the code. It is
@@ -38,15 +52,19 @@ database is even opened, so a typo cannot silently select a writing mode.
 separate build or bundle:
 
 ```
-docker run --rm -e MIGRATION_MODE=job -v <volume>:/etc/data <image>
+docker run --rm --env-file <env> -e MIGRATION_MODE=job <image>
 ```
 
-Stop the service first. SQLite tolerates one writer, so migrating underneath a
-running server is not safe.
+The env file carries `CONTRIB_DB_TYPE` and the connection settings it selects.
+Against sqlite, mount the database's volume at `/etc/data` as well.
+
+Stop the service first. Migrating underneath a running server races the schema
+it is already serving from, and under sqlite, which tolerates a single writer,
+the migration can fail outright.
 
 A mode that applies migrations takes a deployment from nothing to a working
-database, creating one if there is none — so `job` on an empty volume is all a
-first deployment needs. `none` never creates anything and so needs no
+database, creating one if there is none — so `job` against an empty server is
+all a first deployment needs. `none` never creates anything and so needs no
 privilege to.
 
 Whether the database was found or created is logged either way, because a
