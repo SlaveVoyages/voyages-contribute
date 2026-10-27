@@ -26,8 +26,8 @@ export const mysqlConnectionOptions = (
     password: env.CONTRIB_DB_PASSWORD || "",
     database: env.CONTRIB_DB_NAME || "voyages_contribute",
     charset: "utf8mb4",
-    ssl: ca ? { ca, rejectUnauthorized: true }
-      : env.CONTRIB_DB_SSL !== "false" ? { rejectUnauthorized: true } : undefined
+    ssl: ca ? { ca, rejectUnauthorized: true, verifyIdentity: true }
+      : env.CONTRIB_DB_SSL !== "false" ? { rejectUnauthorized: true, verifyIdentity: true } : undefined
   }
 }
 

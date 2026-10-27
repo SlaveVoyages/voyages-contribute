@@ -21,11 +21,11 @@ test("the schema bootstrap retains the application's CA and peer verification", 
     const bootstrap = mysqlBootstrapOptions(options)
     expect(bootstrap).toMatchObject({
       host: "candidate.example.test", port: 3307, username: "migrator",
-      password: "fixture-password", ssl: { ca: Buffer.from("test CA"), rejectUnauthorized: true }
+      password: "fixture-password", ssl: { ca: Buffer.from("test CA"), rejectUnauthorized: true, verifyIdentity: true }
     })
     expect(bootstrap.database).toBeUndefined()
     expect(bootstrap.ssl).toBe(options.ssl)
-    expect(mysqlConnectionOptions({}).ssl).toEqual({ rejectUnauthorized: true })
+    expect(mysqlConnectionOptions({}).ssl).toEqual({ rejectUnauthorized: true, verifyIdentity: true })
     expect(() => mysqlConnectionOptions({ CONTRIB_DB_SSL_CA: join(directory, "absent") })).toThrow("CONTRIB_DB_SSL_CA")
     expect(() => mysqlConnectionOptions({ CONTRIB_DB_PORT: "NaN" })).toThrow("CONTRIB_DB_PORT")
   } finally {
