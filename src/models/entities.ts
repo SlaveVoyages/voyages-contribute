@@ -46,9 +46,9 @@ const mkBuilder = (
   initProps?: Property[]
 ) => new EntitySchemaBuilder(info, AllSchemas, initProps)
 
-export const SparseDateSchema = mkBuilder({
-  name: "VoyageSparseDate",
-  backingTable: "voyage_voyagesparsedate",
+const makeSparseDateSchema = (name: string, backingTable: string) => mkBuilder({
+  name,
+  backingTable,
   pkField: "id",
   contributionMode: "Owned",
   getLabel: (data) => {
@@ -78,6 +78,15 @@ export const SparseDateSchema = mkBuilder({
     validation: rangeValidation(1, 31)
   })
   .build()
+
+export const SparseDateSchema = makeSparseDateSchema(
+  "VoyageSparseDate", "voyage_voyagesparsedate"
+)
+
+// Document dates have their own Django model and primary-key namespace.
+export const SourceDateSchema = makeSparseDateSchema(
+  "SourceDate", "document_docsparsedate"
+)
 
 const coalesce = (a: string | number | null | undefined, b?: string) =>
   a ? `${a}${b ?? ""}` : ""
@@ -1688,7 +1697,7 @@ export const VoyageSourceSchema = mkBuilder({
     // one from the corrected backing field would strand every change already
     // written against this property.
     uid: "Voyage Source_date",
-    linkedEntitySchema: SparseDateSchema,
+    linkedEntitySchema: SourceDateSchema,
     mode: EntityLinkEditMode.Own
   })
   // Editors only, and mandatory. Choosing a short reference is choosing which
