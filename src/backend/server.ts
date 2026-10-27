@@ -5,7 +5,7 @@ import express, {
   ErrorRequestHandler
 } from "express"
 import { initDatabase, DatabaseService, AppDataSource } from "./db"
-import { ensureDatabaseExists, prepareSchema, readMigrationMode } from "./schema"
+import { ensureDatabaseExists, migrationStatus, prepareSchema, readMigrationMode } from "./schema"
 import { jwtVerify, createRemoteJWKSet } from "jose"
 import dotenv from "dotenv"
 import cors from "cors"
@@ -1965,6 +1965,11 @@ export const startServer = async () => {
     console.log("Database initialized")
 
     if ((await prepareSchema(migrationMode)) === "done") {
+      const status = await migrationStatus()
+      console.log(`CONTRIB_MIGRATION_EVIDENCE ${JSON.stringify({
+        known: [...status.known].sort(),
+        applied: [...status.applied].sort()
+      })}`)
       // `job` mode: migrating is the whole task. Closing the connection lets
       // the process end on its own, so the exit code is the outcome.
       await AppDataSource.destroy()
