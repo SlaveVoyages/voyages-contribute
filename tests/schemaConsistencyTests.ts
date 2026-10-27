@@ -163,6 +163,24 @@ test("uids that stored changesets depend on do not move", () => {
   })
 })
 
+test("source dates use the document model without changing voyage dates", () => {
+  const sourceDate = getSchema("SourceDate")
+  expect(sourceDate.backingTable).toBe("document_docsparsedate")
+  expect(sourceDate.properties.map((p) => p.uid)).toEqual([
+    "SourceDate_year", "SourceDate_month", "SourceDate_day"
+  ])
+  expect(getSchema("Voyage Source").properties.find((p) => p.label === "Date"))
+    .toMatchObject({
+      uid: "Voyage Source_date",
+      backingField: "date_id",
+      linkedEntitySchema: "SourceDate"
+    })
+  expect(getSchema("VoyageSparseDate").backingTable).toBe("voyage_voyagesparsedate")
+  expect(getSchema("VoyageSparseDate").properties.map((p) => p.uid)).toEqual([
+    "VoyageSparseDate_year", "VoyageSparseDate_month", "VoyageSparseDate_day"
+  ])
+})
+
 /**
  * Two properties may share a backing field -- a foreign key is often worth both
  * a picker and the raw id behind it -- but only one can be on the form, or the
