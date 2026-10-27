@@ -24,6 +24,7 @@ import { fetchEntities } from "./entityFetch"
 import multer from "multer"
 import path from "path"
 import fs from "fs/promises"
+import { pipeline } from "node:stream/promises"
 import { foldCombinedChanges } from "../models"
 import { randomUUID } from "crypto"
 import { createBulkImportRouter } from "./bulkImport"
@@ -48,6 +49,8 @@ import {
   markApproveRunning
 } from "./batchApproveJobs"
 import { areMatch, isExactEntityRef } from "../models/changeSets"
+import { createMediaStorage, MediaStorage } from "./mediaStorage"
+import { serviceAuthorization, validateServingConfig } from "./runtimeConfig"
 
 // Load environment variables
 dotenv.config()
@@ -102,27 +105,28 @@ const JWKS = SUPABASE_JWKS_URL
 const VOYAGES_SERVER_URL =
   process.env.VOYAGES_SERVER_URL || "http://127.0.0.1:8000"
 const VOYAGES_API_DATA_URL = `${VOYAGES_SERVER_URL}/contrib/data`
-const VOYAGES_API_AUTH_TOKEN = process.env.VOYAGES_API_AUTH_TOKEN || ""
+const SERVICE_AUTHORIZATION = serviceAuthorization(process.env.CONTRIB_SERVICE_TOKEN)
 
 // Configure multer for file uploads
 const uploadDir = process.env.MEDIA_UPLOAD_FOLDER || "./uploads"
+const mediaTempDir = path.join(uploadDir, ".tmp")
+let mediaStorage: MediaStorage
 
 // Ensure upload directory exists
 const ensureUploadDir = async () => {
   try {
-    await fs.access(uploadDir)
+    await fs.access(mediaTempDir)
   } catch {
-    await fs.mkdir(uploadDir, { recursive: true })
+    await fs.mkdir(mediaTempDir, { recursive: true })
   }
 }
 
 const unlinkMediaFiles = async (files: string[]): Promise<void> => {
   for (const file of files) {
-    const filePath = path.join(uploadDir, file)
     try {
-      await fs.unlink(filePath)
+      await mediaStorage.delete(file)
     } catch (error) {
-      console.warn(`Failed to delete file ${filePath}:`, error)
+      console.warn(`Failed to delete media ${file}:`, error)
     }
   }
 }
@@ -131,14 +135,13 @@ const unlinkMediaFiles = async (files: string[]): Promise<void> => {
 const storage = multer.diskStorage({
   destination: async (_req, _file, cb) => {
     await ensureUploadDir()
-    cb(null, uploadDir)
+    cb(null, mediaTempDir)
   },
   filename: (_req, file, cb) => {
-    // Generate unique filename: timestamp_originalname
-    const timestamp = Date.now()
-    const ext = path.extname(file.originalname)
-    const nameWithoutExt = path.basename(file.originalname, ext)
-    const safeFilename = `${timestamp}_${nameWithoutExt}${ext}`
+    // Never put user-supplied paths or names in storage keys.
+    const extension = path.extname(file.originalname).toLowerCase()
+    const ext = /^\.[a-z0-9]{1,10}$/.test(extension) ? extension : ""
+    const safeFilename = `${randomUUID()}${ext}`
     cb(null, safeFilename)
   }
 })
@@ -271,6 +274,17 @@ const authenticateJWT = async (
 // Routes
 app.get("/", (_, res) => {
   res.json({ message: "Contributions API running" })
+})
+
+app.get("/health/live", (_, res) => { res.json({ status: "ok" }) })
+app.get("/health/ready", async (_, res) => {
+  try {
+    if (!AppDataSource.isInitialized) throw new Error("Database not initialized")
+    await AppDataSource.query("SELECT 1")
+    res.json({ status: "ready" })
+  } catch {
+    res.status(503).json({ status: "unavailable" })
+  }
 })
 
 // Hard upper bound on `limit`, which bounds the rows each page loads with
@@ -1062,6 +1076,7 @@ app.post(
   authenticateJWT,
   upload.single("file"),
   async (req, res) => {
+    let uncommittedKey: string | undefined
     try {
       const contributionId = req.params.id
       const uploadedFile = req.file
@@ -1096,6 +1111,8 @@ app.post(
         })
         return
       }
+      await mediaStorage.put(uploadedFile.filename, uploadedFile.path, uploadedFile.mimetype)
+      uncommittedKey = uploadedFile.filename
       const mediaData = {
         type,
         file: uploadedFile.filename, // Store the generated filename
@@ -1115,6 +1132,7 @@ app.post(
         res.status(404).json({ error: "Contribution not found" })
         return
       }
+      uncommittedKey = undefined
       res.status(201).json({
         contribution: updatedContribution,
         uploadedFile: {
@@ -1155,15 +1173,60 @@ app.post(
         error: "Failed to upload media",
         details: (error as Error).message
       })
+    } finally {
+      if (uncommittedKey) {
+        await mediaStorage.delete(uncommittedKey).catch((error) => {
+          console.error("Failed to clean up uncommitted media", error)
+        })
+      }
+      if (req.file) await fs.rm(req.file.path, { force: true }).catch((error) => {
+        console.error("Failed to remove temporary media upload", error)
+      })
     }
   }
 )
 
+// Reads use the same ownership boundary as the contribution, never a public
+// bucket URL or a bearer token embedded in a query string.
+app.get("/media/:mediaId", authenticateJWT, async (req, res) => {
+  try {
+    const mediaId = Number(req.params.mediaId)
+    if (!Number.isSafeInteger(mediaId) || mediaId <= 0) {
+      res.status(400).json({ error: "Invalid media ID" })
+      return
+    }
+    const media = await dbService.getMediaById(mediaId)
+    if (!media) {
+      res.status(404).json({ error: "Media not found" })
+      return
+    }
+    if (!isAuthorOf(req, media.contribution) && !hasEditorRole((req as any).user?.app_metadata)) {
+      res.status(403).json({ error: "You cannot read media from contributions made by others" })
+      return
+    }
+    const stored = await mediaStorage.get(media.file)
+    res.setHeader("Content-Type", stored.contentType)
+    res.setHeader("Content-Disposition", `attachment; filename="${media.file}"`)
+    res.setHeader("X-Content-Type-Options", "nosniff")
+    res.setHeader("Cache-Control", "private, no-store")
+    if (stored.length !== undefined) res.setHeader("Content-Length", stored.length)
+    await pipeline(stored.body, res)
+  } catch (error) {
+    if (res.headersSent) {
+      res.destroy()
+      return
+    }
+    const failure = error as { name?: string; code?: string }
+    const missing = failure.name === "NoSuchKey" || failure.code === "ENOENT"
+    res.status(missing ? 404 : 500).json({ error: missing ? "Media not found" : "Failed to read media" })
+  }
+})
+
 // Delete media from contribution
 app.delete("/media/:mediaId", authenticateJWT, async (req, res) => {
   try {
-    const mediaId = parseInt(req.params.mediaId)
-    if (isNaN(mediaId)) {
+    const mediaId = Number(req.params.mediaId)
+    if (!Number.isSafeInteger(mediaId) || mediaId <= 0) {
       res.status(400).json({
         error: "Invalid media ID",
         details: "Media ID must be a number"
@@ -1182,14 +1245,9 @@ app.delete("/media/:mediaId", authenticateJWT, async (req, res) => {
       })
       return
     }
-    // Delete the file from disk
-    const filePath = path.join(uploadDir, media.file)
-    try {
-      await fs.unlink(filePath)
-    } catch (error) {
-      console.warn(`Failed to delete file ${filePath}:`, error)
-      // Continue with database deletion even if file deletion fails
-    }
+    // Retain the database reference if storage is unavailable, so a retry can
+    // finish deletion instead of silently orphaning a private object.
+    await mediaStorage.delete(media.file)
     // Delete from database
     const success = await dbService.removeMedia(mediaId)
     if (!success) {
@@ -1693,7 +1751,8 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
     const pubRes = await fetch(`${VOYAGES_SERVER_URL}/contrib/publish_batch`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        Authorization: SERVICE_AUTHORIZATION
       },
       body: JSON.stringify({
         key: `${id}_${mode}`,
@@ -1730,7 +1789,8 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
   try {
     const { pub_id } = req.params
     const pubRes = await fetch(
-      `${VOYAGES_SERVER_URL}/contrib/publication_status/${pub_id}`
+      `${VOYAGES_SERVER_URL}/contrib/publication_status/${encodeURIComponent(pub_id)}`,
+      { headers: { Authorization: SERVICE_AUTHORIZATION } }
     )
     const pubState = await pubRes.json()
     if (
@@ -1891,6 +1951,7 @@ export const startServer = async () => {
     // Read the mode before connecting, so a typo fails immediately rather
     // than after the database is open.
     const migrationMode = readMigrationMode(process.env.MIGRATION_MODE)
+    if (migrationMode !== "job") validateServingConfig(process.env)
 
     // A mode that applies migrations can take a deployment from nothing to a
     // working database, so it makes sure there is one to connect to. `none`
@@ -1912,8 +1973,9 @@ export const startServer = async () => {
 
     // Create database service
     dbService = new DatabaseService()
+    mediaStorage = createMediaStorage(uploadDir)
     resolver = new DebouncedResolver(
-      new ApiBatchResolver(VOYAGES_API_DATA_URL, VOYAGES_API_AUTH_TOKEN),
+      new ApiBatchResolver(VOYAGES_API_DATA_URL, SERVICE_AUTHORIZATION),
       50
     )
 

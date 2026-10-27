@@ -84,3 +84,39 @@ syntax — SQLite only accepts `AUTOINCREMENT` on a column typed exactly
 ## Running the server
 
 npm run build-server && node ./output/server/server.js
+
+### Candidate runtime
+
+Use the same server image for migrations (`MIGRATION_MODE=job`) and serving
+(`MIGRATION_MODE=none`). The migration process needs only database settings;
+it exits without opening an HTTP listener or loading runtime authentication
+and media storage. MySQL bootstrap and normal connections both use
+`CONTRIB_DB_SSL_CA`, including hostname and certificate verification.
+
+Serving with `NODE_ENV=production` requires `SUPABASE_URL` and the server-only
+`CONTRIB_SERVICE_TOKEN`. The optional `SUPABASE_JWKS_URL` overrides the standard
+JWKS endpoint. `VOYAGES_SERVER_URL` selects the matching Django API; data,
+publication, and polling requests all use the service token as a bearer token.
+Do not expose this credential in frontend configuration.
+
+Set `CONTRIB_MEDIA_BUCKET` and `CONTRIB_MEDIA_PREFIX` together to store media in
+private S3 objects. For an isolated candidate, use
+`candidates/<slot>/contribute/media/`. AWS credentials come from the SDK's
+default provider chain, including EKS Pod Identity. The service needs object
+read, write, and delete permissions only within that prefix. No public ACL is
+created. Without these two settings, disk-backed storage remains available for
+local development and existing single-host deployments. `MEDIA_UPLOAD_FOLDER`
+must remain writable for temporary media files and CSV imports.
+
+`GET /media/:mediaId` requires the author's or an editor's bearer token and
+returns a private, non-cacheable download. Browser clients should fetch the
+bytes with an Authorization header rather than embedding credentials in URLs.
+
+`/health/live` checks the HTTP process; `/health/ready` verifies a database
+query. Run one server replica: CSV-import and bulk-approve progress is still
+process-local and is lost on restart. Stored contribution records and S3 media
+survive process replacement.
+
+Run `npx vitest run`, `npm run build-server`, and
+`node tests/authzSmoke.mjs` before deployment. The smoke test uses temporary
+storage and a local signing key; it does not contact Supabase or Django.
