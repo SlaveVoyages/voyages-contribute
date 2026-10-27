@@ -24,6 +24,8 @@ const JWKS_PORT = PORT + 1
 const DJANGO_PORT = PORT + 2
 const API = `http://127.0.0.1:${PORT}`
 const djangoRequests = []
+const publications = new Map()
+const completedPublications = new Set()
 const django = createServer(async (req, res) => {
   let raw = ""
   for await (const chunk of req) raw += chunk.toString()
@@ -33,10 +35,18 @@ const django = createServer(async (req, res) => {
   if (req.url === "/contrib/data") {
     res.end(JSON.stringify(Object.fromEntries(Object.keys(body).map((key) => [key, []]))))
   } else if (req.url === "/contrib/publish_batch") {
+    publications.set(body.key, body.contribution_ids)
+    if (completedPublications.has(body.key)) {
+      res.end(JSON.stringify({ publication_key: body.key, status: "completed", contribution_ids: publications.get(body.key) }))
+      return
+    }
     res.statusCode = 202
     res.end(JSON.stringify({ publication_key: body.key, status: "accepted" }))
   } else {
-    res.end(JSON.stringify({ status: "pending" }))
+    const key = decodeURIComponent(req.url.split("/").at(-1))
+    res.end(JSON.stringify(completedPublications.has(key)
+      ? { publication_key: key, status: "completed", contribution_ids: publications.get(key) }
+      : { status: "pending" }))
   }
 }).listen(DJANGO_PORT)
 
@@ -81,28 +91,32 @@ const noAddress = await token({
 })
 
 const workspace = mkdtempSync(join(tmpdir(), "contrib-smoke-"))
-const server = spawn(process.execPath, ["output/server/server.js"], {
-  env: {
-    ...process.env,
-    PORT: String(PORT),
-    NODE_ENV: "test",
-    DEV_DISABLE_AUTH: "false",
-    MIGRATION_MODE: "on-startup",
-    CONTRIB_DB_TYPE: process.env.CONTRIB_DB_TYPE ?? "sqlite",
-    CONTRIB_DB_PATH: process.env.CONTRIB_DB_PATH ?? join(workspace, "smoke.db"),
-    MEDIA_UPLOAD_FOLDER: join(workspace, "uploads"),
-    SUPABASE_URL: "",
-    SUPABASE_JWKS_URL: `http://127.0.0.1:${JWKS_PORT}/jwks.json`,
-    VOYAGES_SERVER_URL: `http://127.0.0.1:${DJANGO_PORT}`,
-    CONTRIB_SERVICE_TOKEN: "smoke-server-only",
-    CONTRIB_MEDIA_BUCKET: "",
-    CONTRIB_MEDIA_PREFIX: ""
-  },
-  stdio: ["ignore", "pipe", "pipe"]
-})
 let log = ""
-server.stdout.on("data", (chunk) => (log += chunk))
-server.stderr.on("data", (chunk) => (log += chunk))
+const startNode = () => {
+  const child = spawn(process.execPath, ["output/server/server.js"], {
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      NODE_ENV: "test",
+      DEV_DISABLE_AUTH: "false",
+      MIGRATION_MODE: "on-startup",
+      CONTRIB_DB_TYPE: process.env.CONTRIB_DB_TYPE ?? "sqlite",
+      CONTRIB_DB_PATH: process.env.CONTRIB_DB_PATH ?? join(workspace, "smoke.db"),
+      MEDIA_UPLOAD_FOLDER: join(workspace, "uploads"),
+      SUPABASE_URL: "",
+      SUPABASE_JWKS_URL: `http://127.0.0.1:${JWKS_PORT}/jwks.json`,
+      VOYAGES_SERVER_URL: `http://127.0.0.1:${DJANGO_PORT}`,
+      CONTRIB_SERVICE_TOKEN: "smoke-server-only",
+      CONTRIB_MEDIA_BUCKET: "",
+      CONTRIB_MEDIA_PREFIX: ""
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  })
+  child.stdout.on("data", (chunk) => (log += chunk))
+  child.stderr.on("data", (chunk) => (log += chunk))
+  return child
+}
+let server = startNode()
 
 const ready = async () => {
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -308,6 +322,18 @@ try {
   check("the publication fixture is accepted", accepted.status === 200, accepted)
   const published = await call("POST", "/publish", editor, { id: publishable.body?.id, mode: "contribution" })
   check("publication reaches Django", published.status === 202, published)
+  // Django commits, then the service restarts before any poll reconciles its
+  // local status. A fresh submit receives the durable completed receipt.
+  completedPublications.add(published.body.publication_key)
+  await new Promise((resolve) => { server.once("exit", resolve); server.kill() })
+  server = startNode()
+  await ready()
+  const retried = await call("POST", "/publish", editor, { id: publishable.body.id, mode: "contribution" })
+  check("a completed publish retry survives service restart", retried.status === 200 && retried.body?.status === "completed", retried)
+  const reconciled = await call("GET", `/contributions/${publishable.body.id}`, editor)
+  check("submit completion records Published before replying", reconciled.body?.status === 4, reconciled)
+  const repolled = await call("POST", `/publish_poll/${published.body.publication_key}`, editor, {})
+  check("completed publication polling is safe to repeat", repolled.status === 200 && repolled.body?.status === "completed", repolled)
   for (const path of ["/contrib/data", "/contrib/publish_batch", "/contrib/publication_status/fixture_contribution"]) {
     const requests = djangoRequests.filter((request) => request.path === path)
     check(`${path} uses the server-only credential`, requests.length > 0 && requests.every((request) => request.authorization === "Bearer smoke-server-only"))

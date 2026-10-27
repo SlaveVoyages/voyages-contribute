@@ -51,6 +51,7 @@ import {
 import { areMatch, isExactEntityRef } from "../models/changeSets"
 import { createMediaStorage, MediaStorage } from "./mediaStorage"
 import { serviceAuthorization, validateServingConfig } from "./runtimeConfig"
+import { reconcilePublicationResponse } from "./publicationResponse"
 
 // Load environment variables
 dotenv.config()
@@ -1760,8 +1761,15 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
         contribution_ids: contributions.map((c) => c.id)
       })
     })
-    // forward the response.
-    res.status(pubRes.status).json({ ...(await pubRes.json()), validation })
+    const response = await reconcilePublicationResponse({
+      status: pubRes.status,
+      body: await pubRes.json(),
+      publicationKey: `${id}_${mode}`,
+      phase: "publish",
+      publishedBy: getAuthorIdentity(req),
+      recordPublication: dbService.recordPublication.bind(dbService)
+    })
+    res.status(response.status).json({ ...response.body, validation })
   } catch (error) {
     console.error("Error publishing batch:", error)
     res.status(500).json({
@@ -1771,19 +1779,6 @@ app.post("/publish", authenticateJWT, requireEditor, async (req, res) => {
   }
 })
 
-// Publication keys are `${id}_${mode}`. Contribution ids are uuids, which carry
-// no underscore, so the `_batch` suffix identifies a batch run unambiguously.
-const batchIdFromPublicationKey = (publicationKey: string): number | null => {
-  const suffix = "_batch"
-  if (!publicationKey.endsWith(suffix)) {
-    return null
-  }
-  // `Number("")` is 0, so an id-less key would otherwise parse as batch 0.
-  const raw = publicationKey.slice(0, -suffix.length)
-  const batchId = Number(raw)
-  return raw !== "" && Number.isInteger(batchId) && batchId > 0 ? batchId : null
-}
-
 // Poll publication status
 app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, res) => {
   try {
@@ -1792,49 +1787,15 @@ app.post("/publish_poll/:pub_id", authenticateJWT, requireEditor, async (req, re
       `${VOYAGES_SERVER_URL}/contrib/publication_status/${encodeURIComponent(pub_id)}`,
       { headers: { Authorization: SERVICE_AUTHORIZATION } }
     )
-    const pubState = await pubRes.json()
-    if (
-      pubRes.ok &&
-      pubState.status === "completed" &&
-      Array.isArray(pubState.contribution_ids)
-    ) {
-      try {
-        // Moving the contributions is only half of it: until the batch itself
-        // carries a date it stays on the pending list, still offering a Publish
-        // button for work that is already out. Upstream publishes a batch all
-        // or none, so both halves are recorded together or not at all.
-        //
-        // The key is `${id}_${mode}` (see /publish), so a batch run is the one
-        // ending in `_batch`; a single contribution has no batch to stamp.
-        //
-        // Whoever's poll observed the completion is recorded as the publisher.
-        // Publication is a background job with no identity of its own, and this
-        // is the closest thing to a human decision it has: the editor who
-        // pressed Publish is the one whose client keeps polling it.
-        const batchId = batchIdFromPublicationKey(pub_id)
-        const { updated, stamped } = await dbService.recordPublication(
-          pubState.contribution_ids,
-          batchId,
-          getAuthorIdentity(req)
-        )
-        console.log(
-          `Successfully updated ${updated} contributions to Published status`
-        )
-        if (stamped) {
-          console.log(`Marked batch ${batchId} as published`)
-        }
-      } catch (recordError) {
-        // The publication itself already happened and cannot be taken back, so
-        // refusing the caller here would cost them the status they asked for
-        // without undoing anything. The write is atomic, so what is lost is
-        // the whole record of it rather than half of one. Getting it back
-        // means publishing again, which upstream answers with the same
-        // publication: the response below still reports completion, so nothing
-        // polls a second time on its own.
-        console.error("Error recording the publication:", recordError)
-      }
-    }
-    res.status(pubRes.status).json(pubState)
+    const response = await reconcilePublicationResponse({
+      status: pubRes.status,
+      body: await pubRes.json(),
+      publicationKey: pub_id,
+      phase: "poll",
+      publishedBy: getAuthorIdentity(req),
+      recordPublication: dbService.recordPublication.bind(dbService)
+    })
+    res.status(response.status).json(response.body)
   } catch (error) {
     console.error("Error polling publication status:", error)
     res.status(500).json({
