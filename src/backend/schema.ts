@@ -2,6 +2,7 @@ import { DataSource } from "typeorm"
 import { existsSync } from "fs"
 import { resolve } from "path"
 import { AppDataSource } from "./db"
+import { mysqlBootstrapOptions, MysqlConnectionOptions } from "./databaseConfig"
 
 /**
  * Schema management for the contributions database, shared by the server and
@@ -122,14 +123,8 @@ const reportSqliteFile = (database: string): void => {
  * the CREATE only when it is genuinely absent — so a deployment whose database
  * already exists never needs the privilege to create one.
  */
-const ensureMysqlDatabase = async (options: {
-  host?: string
-  port?: number
-  username?: string
-  password?: string
-  database?: string
-}): Promise<void> => {
-  const { host, port, username, password, database } = options
+const ensureMysqlDatabase = async (options: MysqlConnectionOptions): Promise<void> => {
+  const { database } = options
   if (!database) {
     throw new Error("CONTRIB_DB_NAME is not set; nothing to create.")
   }
@@ -138,15 +133,7 @@ const ensureMysqlDatabase = async (options: {
       `CONTRIB_DB_NAME must match [A-Za-z0-9_$]+; got "${database}".`
     )
   }
-  const bootstrap = new DataSource({
-    type: "mysql",
-    host,
-    port,
-    username,
-    password,
-    charset: "utf8mb4",
-    logging: false
-  })
+  const bootstrap = new DataSource(mysqlBootstrapOptions(options))
   await bootstrap.initialize()
   try {
     const found: unknown[] = await bootstrap.query(
