@@ -1,4 +1,4 @@
-import { combineChanges, EntityChange, EntityRef } from "./changeSets"
+import { combineChanges, CombinedChangeSet, EntityChange, EntityRef } from "./changeSets"
 import { EntitySchema } from "./entities"
 import { MaterializedEntity } from "./materialization"
 
@@ -135,7 +135,7 @@ const alignRootType = (root: EntityRef, change: EntityChange): EntityChange =>
  * Combine all the changes of a contribution, starting with the original and
  * applying all editorial review changes on top in the correct order.
  */
-export const combineContributionChanges = (contrib: Contribution) => {
+export const combineContributionChanges = (contrib: Contribution): CombinedChangeSet => {
   const sorted = [...contrib.reviews]
   sorted.sort((a, b) => a.stackOrder - b.stackOrder)
   const combined = combineChanges(

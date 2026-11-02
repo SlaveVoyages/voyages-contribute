@@ -2,6 +2,7 @@ import { expect, test } from "vitest"
 import { mkdtempSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { reconcilePublicationResponse } from "../src/backend/publicationResponse"
 
 /**
  * What a batch records about its own publication, and what that record forbids.
@@ -140,6 +141,42 @@ test("a completed publication is recorded whole", async () => {
     stamped: false
   })
   expect(await statusOf("alone")).toBe(ContributionStatus.Published)
+})
+
+test("a committed publication keeps its polling key until local reconciliation succeeds", async () => {
+  const batch = await db.createPublicationBatch({ title: "retry-completion", comments: "" })
+  await contribution("retry-completion", ContributionStatus.Accepted)
+  await db.assignContributionToBatch("retry-completion", batch.id)
+  const publicationKey = `${batch.id}_batch`
+  const body = { status: "completed", publication_key: publicationKey, contribution_ids: ["retry-completion"] }
+  const respond = (phase: "publish" | "poll", publishedBy = "first-editor@example.org") =>
+    reconcilePublicationResponse({ status: 200, body, publicationKey, phase, publishedBy,
+      recordPublication: db.recordPublication.bind(db) })
+
+  // Fail the second write inside the real transaction. The contribution's
+  // preceding update must roll back with the batch stamp.
+  await AppDataSource.query(`CREATE TRIGGER reject_publication_stamp BEFORE UPDATE ON publication_batches
+    WHEN OLD.id = ${batch.id} BEGIN SELECT RAISE(ABORT, 'temporary fixture failure'); END`)
+  try {
+    expect(await respond("publish")).toMatchObject({ status: 202, body: { status: "accepted", publication_key: publicationKey } })
+    expect(await respond("poll")).toMatchObject({ status: 503, body: { status: "pending", publication_key: publicationKey } })
+    expect(await statusOf("retry-completion")).toBe(ContributionStatus.Accepted)
+    expect((await db.getBatchById(batch.id))!.published).toBeNull()
+  } finally {
+    await AppDataSource.query("DROP TRIGGER reject_publication_stamp")
+  }
+
+  expect(await respond("poll")).toEqual({ status: 200, body })
+  expect(await statusOf("retry-completion")).toBe(ContributionStatus.Published)
+  const first = (await db.getBatchById(batch.id))!
+  expect(first.published).toBeTypeOf("number")
+  expect(first.publishedBy).toBe("first-editor@example.org")
+  // A response lost after reconciliation can be retried without rewriting
+  // the original publisher or date.
+  expect(await respond("publish", "second-editor@example.org")).toEqual({ status: 200, body })
+  const retry = (await db.getBatchById(batch.id))!
+  expect(retry.published).toBe(first.published)
+  expect(retry.publishedBy).toBe(first.publishedBy)
 })
 
 test("what a published batch holds is fixed, and what an open one holds is not", async () => {

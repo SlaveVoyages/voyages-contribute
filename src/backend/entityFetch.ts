@@ -118,7 +118,7 @@ const linkedEntityFetch: FetchPropType<LinkedEntityProperty> = async (
     entity.data[p.label] = singleOrNull(
       await fetchEntities(
         linkedSchema,
-        [{ field: linkedSchema.pkField, value: id }],
+        [{ field: linkedSchema.databasePkField ?? linkedSchema.pkField, value: id }],
         resolver
       )
     )
@@ -164,6 +164,9 @@ export const fetchEntities = async (
   const fieldMap = extractFields(schema.properties, options?.additionalFields)
   // Ensure that the PK field is extracted.
   fieldMap.set(schema.pkField, fieldMap.get(schema.pkField) ?? "id")
+  // Public Voyage IDs identify contributions; database IDs own their children.
+  const databasePkField = schema.databasePkField ?? schema.pkField
+  fieldMap.set(databasePkField, fieldMap.get(databasePkField) ?? databasePkField)
   const fetched = await resolver.fetch({
     query: {
       model: schema.backingTable,
@@ -177,10 +180,11 @@ export const fetchEntities = async (
   const entities: MaterializedEntity[] = []
   const promises: Promise<true | Error>[] = []
   for (const fieldValues of fetched) {
-    const id = fieldValues[schema.pkField]
-    if (!id) {
+    const id = fieldValues[databasePkField]
+    if (!id || !fieldValues[schema.pkField]) {
+      const missing = !id ? databasePkField : schema.pkField
       throw new Error(
-        `The PK field '${schema.pkField}' was not fetched by the data resolver`
+        `The PK field '${missing}' was not fetched by the data resolver`
       )
     }
     const entity = bindEntity(schema, fieldValues, fieldMap)

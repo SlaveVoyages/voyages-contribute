@@ -126,7 +126,7 @@ test("an owned date in the data is written with the source", () => {
   const result = fold(
     newEntity("Voyage Source", "src-1", {
       Title: "T",
-      Date: newEntity("VoyageSparseDate", "date-1", {
+      Date: newEntity("SourceDate", "date-1", {
         Year: 1790,
         Month: null,
         Day: null
@@ -135,13 +135,15 @@ test("an owned date in the data is written with the source", () => {
   )
   expect(written(result, "src-1")).toContainEqual(["date_id", "date-1"])
   expect(written(result, "date-1")).toContainEqual(["year", 1790])
+  expect(result.updates.find((u) => u.entityRef.id === "date-1")?.entityRef.schema)
+    .toBe("SourceDate")
 })
 
 test("an owned date with no values is not written", () => {
   const result = fold(
     newEntity("Voyage Source", "src-1", {
       Title: "T",
-      Date: newEntity("VoyageSparseDate", "date-1", {
+      Date: newEntity("SourceDate", "date-1", {
         Year: null,
         Month: null,
         Day: null
