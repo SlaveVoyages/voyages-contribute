@@ -57,14 +57,24 @@ const jwk = {
   alg: "RS256",
   use: "sig"
 }
+// Supabase projects can use ES256; retain the existing RSA workflow checks too.
+const ecKeys = await generateKeyPair("ES256")
+const ecJwk = {
+  ...(await exportJWK(ecKeys.publicKey)),
+  kid: "smoke-es256",
+  alg: "ES256",
+  use: "sig"
+}
+const issuer = `http://127.0.0.1:${JWKS_PORT}/auth/v1`
 const jwks = createServer((_req, res) => {
   res.setHeader("content-type", "application/json")
-  res.end(JSON.stringify({ keys: [jwk] }))
+  res.end(JSON.stringify({ keys: [jwk, ecJwk] }))
 }).listen(JWKS_PORT)
 
 const token = async (claims) =>
   new SignJWT({ aud: "authenticated", ...claims })
     .setProtectedHeader({ alg: "RS256", kid: "smoke" })
+    .setIssuer(issuer)
     .setIssuedAt()
     .setExpirationTime("1h")
     .sign(privateKey)
@@ -103,7 +113,7 @@ const startNode = () => {
       CONTRIB_DB_TYPE: process.env.CONTRIB_DB_TYPE ?? "sqlite",
       CONTRIB_DB_PATH: process.env.CONTRIB_DB_PATH ?? join(workspace, "smoke.db"),
       MEDIA_UPLOAD_FOLDER: join(workspace, "uploads"),
-      SUPABASE_URL: "",
+      SUPABASE_URL: `http://127.0.0.1:${JWKS_PORT}`,
       SUPABASE_JWKS_URL: `http://127.0.0.1:${JWKS_PORT}/jwks.json`,
       VOYAGES_SERVER_URL: `http://127.0.0.1:${DJANGO_PORT}`,
       CONTRIB_SERVICE_TOKEN: "smoke-server-only",
@@ -166,6 +176,27 @@ const draft = (voyageId) => ({
 
 try {
   await ready()
+  const ecToken = async (claims, key = ecKeys.privateKey) =>
+    new SignJWT({
+      aud: "authenticated",
+      sub: "jwt-boundary-fixture",
+      email: "jwt-boundary@example.org",
+      iss: issuer,
+      exp: Math.floor(Date.now() / 1000) + 60,
+      ...claims
+    })
+      .setProtectedHeader({ alg: "ES256", kid: "smoke-es256" })
+      .sign(key)
+  const wrongKey = await generateKeyPair("ES256")
+  check("missing bearer is refused", (await fetch(API + "/contributions")).status === 401)
+  check("malformed JWT is refused", (await call("GET", "/contributions", "malformed")).status === 403)
+  check("expired ES256 token is refused", (await call("GET", "/contributions", await ecToken({ exp: 1 }))).status === 403)
+  check("a token for another audience is refused", (await call("GET", "/contributions", await ecToken({ aud: "anonymous" }))).status === 403)
+  check("a token from another issuer is refused", (await call("GET", "/contributions", await ecToken({ iss: "https://wrong.invalid/auth/v1" }))).status === 403)
+  check("an invalid ES256 signature is refused", (await call("GET", "/contributions", await ecToken({}, wrongKey.privateKey))).status === 403)
+  check("a token without a subject is refused", (await call("GET", "/contributions", await ecToken({ sub: "" }))).status === 403)
+  check("self-editable metadata cannot grant Editor", (await call("GET", "/batches/all", await ecToken({ user_metadata: { role: "Editor" } }))).status === 403)
+  check("trusted roles array grants Editor with ES256", (await call("GET", "/batches/all", await ecToken({ app_metadata: { roles: ["Editor"] } }))).status === 200)
   check("liveness succeeds", (await fetch(API + "/health/live")).ok)
   check("readiness verifies the database", (await fetch(API + "/health/ready")).ok)
   check("data lookup reaches Django", (await fetch(API + "/enumerate/Nationality")).ok)
