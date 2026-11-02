@@ -29,6 +29,8 @@ export interface EntitySchema {
   name: string
   backingTable: string
   pkField: string
+  /** Database primary key when entity references use a public identifier. */
+  databasePkField?: string
   contributionMode: EntityContributionMode
   properties: Property[]
   getLabel: (data: Record<string, any>, short?: boolean) => string
@@ -1772,6 +1774,7 @@ export const VoyageSchema = mkBuilder({
   backingTable: "voyage_voyage",
   contributionMode: "Full",
   pkField: "voyage_id",
+  databasePkField: "id",
   getLabel: (d) => `Voyage #${d["Voyage ID"]}`
 })
   // Mandatory, and the editor's to assign. Ids are issued from blocks an editor
